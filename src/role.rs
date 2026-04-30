@@ -81,7 +81,11 @@ mod tests {
     #[test]
     fn parse_round_trip() {
         for &r in ALL {
-            assert_eq!(Role::parse(r.as_str()), Some(r), "round-trip failed for {r:?}");
+            assert_eq!(
+                Role::parse(r.as_str()),
+                Some(r),
+                "round-trip failed for {r:?}"
+            );
         }
     }
 

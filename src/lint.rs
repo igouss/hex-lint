@@ -57,7 +57,11 @@ pub struct LintReport {
 
 /// Run the lint. `packages` MUST be the full set of workspace members; any
 /// edge whose consumer or dep isn't in `packages` is dropped (foreign edge).
-pub fn run(packages: &[WorkspacePackage], edges: &[DepEdge], exceptions: &[Exception]) -> LintReport {
+pub fn run(
+    packages: &[WorkspacePackage],
+    edges: &[DepEdge],
+    exceptions: &[Exception],
+) -> LintReport {
     let role_by_name: BTreeMap<&str, Role> =
         packages.iter().map(|p| (p.name.as_str(), p.role)).collect();
 
@@ -147,10 +151,8 @@ mod tests {
 
     #[test]
     fn matrix_violation_is_unsanctioned_without_exception() {
-        let packages: Vec<WorkspacePackage> = vec![
-            pkg("d", Role::Domain),
-            pkg("infra", Role::Infra),
-        ];
+        let packages: Vec<WorkspacePackage> =
+            vec![pkg("d", Role::Domain), pkg("infra", Role::Infra)];
         // Domain depending on Infra is forbidden.
         let edges: Vec<DepEdge> = vec![edge("d", "infra")];
         let report: LintReport = run(&packages, &edges, &[]);
@@ -166,10 +168,8 @@ mod tests {
 
     #[test]
     fn exception_sanctions_violation() {
-        let packages: Vec<WorkspacePackage> = vec![
-            pkg("d", Role::Domain),
-            pkg("infra", Role::Infra),
-        ];
+        let packages: Vec<WorkspacePackage> =
+            vec![pkg("d", Role::Domain), pkg("infra", Role::Infra)];
         let edges: Vec<DepEdge> = vec![edge("d", "infra")];
         let exceptions: Vec<Exception> = vec![exc("d", "infra")];
         let report: LintReport = run(&packages, &edges, &exceptions);
@@ -199,11 +199,7 @@ mod tests {
             pkg("u", Role::Usecase),
             pkg("infra", Role::Infra),
         ];
-        let edges: Vec<DepEdge> = vec![
-            edge("root", "d"),
-            edge("root", "u"),
-            edge("root", "infra"),
-        ];
+        let edges: Vec<DepEdge> = vec![edge("root", "d"), edge("root", "u"), edge("root", "infra")];
         let report: LintReport = run(&packages, &edges, &[]);
         assert!(report.violations.is_empty());
     }
@@ -211,10 +207,7 @@ mod tests {
     #[test]
     fn edges_with_unknown_endpoints_are_ignored() {
         let packages: Vec<WorkspacePackage> = vec![pkg("d", Role::Domain)];
-        let edges: Vec<DepEdge> = vec![
-            edge("d", "external_crate"),
-            edge("external_crate", "d"),
-        ];
+        let edges: Vec<DepEdge> = vec![edge("d", "external_crate"), edge("external_crate", "d")];
         let report: LintReport = run(&packages, &edges, &[]);
         assert!(report.violations.is_empty());
     }

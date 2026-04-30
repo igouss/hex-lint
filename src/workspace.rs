@@ -55,8 +55,7 @@ pub fn load(manifest_path: Option<&Path>) -> Result<Workspace, LoadError> {
     }
     let metadata = cmd.exec().map_err(|e| LoadError::Metadata(e.to_string()))?;
 
-    let workspace_ids: std::collections::BTreeSet<_> =
-        metadata.workspace_members.iter().collect();
+    let workspace_ids: std::collections::BTreeSet<_> = metadata.workspace_members.iter().collect();
 
     let mut name_by_id: BTreeMap<&cargo_metadata::PackageId, &str> = BTreeMap::new();
     let mut packages: Vec<WorkspacePackage> = Vec::new();
