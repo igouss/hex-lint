@@ -24,11 +24,23 @@ use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use serde::Serialize;
+
+use crate::lint::Exception;
+use crate::role::Role;
+
 const DEFAULT_EXCEPTIONS_FILENAME: &str = "hex-lint-exceptions.toml";
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Format {
+    Text,
+    Json,
+}
 
 struct Args {
     exceptions: Option<PathBuf>,
     manifest_path: Option<PathBuf>,
+    format: Format,
 }
 
 #[cfg_attr(test, derive(Debug))]
@@ -44,7 +56,35 @@ impl std::fmt::Debug for Args {
         f.debug_struct("Args")
             .field("exceptions", &self.exceptions)
             .field("manifest_path", &self.manifest_path)
+            .field("format", &self.format.as_str())
             .finish()
+    }
+}
+
+#[cfg(test)]
+impl std::fmt::Debug for Format {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Format {
+    fn parse(s: &str) -> Option<Self> {
+        match s {
+            "text" => Some(Self::Text),
+            "json" => Some(Self::Json),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Format {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Json => "json",
+        }
     }
 }
 
@@ -60,6 +100,7 @@ fn print_help() {
         "    -e, --exceptions <PATH>   Exceptions TOML. Default: <workspace-root>/{DEFAULT_EXCEPTIONS_FILENAME}"
     );
     println!("        --manifest-path <PATH>  Path to a Cargo.toml in the workspace.");
+    println!("    -f, --format <FMT>        Output format: text (default) or json.");
     println!("    -h, --help                Print this help.");
     println!("    -V, --version             Print version.");
     println!();
@@ -76,6 +117,7 @@ fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<ParseOutcome, S
     let mut it = args.into_iter();
     let mut exceptions: Option<PathBuf> = None;
     let mut manifest_path: Option<PathBuf> = None;
+    let mut format: Format = Format::Text;
 
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -93,11 +135,21 @@ fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<ParseOutcome, S
                     .ok_or_else(|| "--manifest-path requires a value".to_owned())?;
                 manifest_path = Some(PathBuf::from(v));
             }
+            "-f" | "--format" => {
+                let v: String = it
+                    .next()
+                    .ok_or_else(|| "--format requires a value".to_owned())?;
+                format =
+                    Format::parse(&v).ok_or_else(|| format!("unknown format `{v}` (text|json)"))?;
+            }
             other => {
                 if let Some(v) = other.strip_prefix("--exceptions=") {
                     exceptions = Some(PathBuf::from(v));
                 } else if let Some(v) = other.strip_prefix("--manifest-path=") {
                     manifest_path = Some(PathBuf::from(v));
+                } else if let Some(v) = other.strip_prefix("--format=") {
+                    format = Format::parse(v)
+                        .ok_or_else(|| format!("unknown format `{v}` (text|json)"))?;
                 } else {
                     return Err(format!("unknown argument: {other}"));
                 }
@@ -107,6 +159,7 @@ fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<ParseOutcome, S
     Ok(ParseOutcome::Run(Args {
         exceptions,
         manifest_path,
+        format,
     }))
 }
 
@@ -175,9 +228,26 @@ fn main() -> ExitCode {
     };
 
     let report: lint::LintReport = lint::run(&ws.packages, &ws.edges, &exceptions);
+    let had_problem: bool = !report.unsanctioned.is_empty() || !report.stale_exceptions.is_empty();
 
-    let mut had_problem: bool = false;
+    match args.format {
+        Format::Text => render_text(&ws.packages, &report, &exceptions, had_problem),
+        Format::Json => render_json(&ws.packages, &report, &exceptions, had_problem),
+    }
 
+    if had_problem {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+fn render_text(
+    packages: &[lint::WorkspacePackage],
+    report: &lint::LintReport,
+    exceptions: &[Exception],
+    had_problem: bool,
+) {
     if !report.unsanctioned.is_empty() {
         eprintln!("hex-lint: unsanctioned hex-arch role violations (not in exceptions file):");
         for v in &report.unsanctioned {
@@ -189,7 +259,6 @@ fn main() -> ExitCode {
                 v.dep_role.as_str()
             );
         }
-        had_problem = true;
     }
 
     if !report.stale_exceptions.is_empty() {
@@ -201,19 +270,181 @@ fn main() -> ExitCode {
                 e.consumer, e.dep, e.ticket, e.reason
             );
         }
-        had_problem = true;
     }
 
-    if had_problem {
-        ExitCode::FAILURE
-    } else {
+    if !had_problem {
         println!(
             "hex-lint: clean ({} workspace packages, {} active violation(s) all sanctioned by {} exception(s))",
-            ws.packages.len(),
+            packages.len(),
             report.violations.len(),
             exceptions.len()
         );
-        ExitCode::SUCCESS
+    }
+}
+
+fn render_json(
+    packages: &[lint::WorkspacePackage],
+    report: &lint::LintReport,
+    exceptions: &[Exception],
+    had_problem: bool,
+) {
+    let exc_by_key: std::collections::BTreeMap<(&str, &str), &Exception> = exceptions
+        .iter()
+        .map(|e| ((e.consumer.as_str(), e.dep.as_str()), e))
+        .collect();
+
+    let violations: Vec<JsonViolation<'_>> = report
+        .violations
+        .iter()
+        .map(|v| {
+            let exc: Option<&&Exception> = exc_by_key.get(&(v.consumer.as_str(), v.dep.as_str()));
+            JsonViolation {
+                consumer: &v.consumer,
+                consumer_role: v.consumer_role.as_str(),
+                dep: &v.dep,
+                dep_role: v.dep_role.as_str(),
+                sanctioned: exc.is_some(),
+                ticket: exc.map(|e| e.ticket.as_str()),
+                reason: exc.map(|e| e.reason.as_str()),
+            }
+        })
+        .collect();
+
+    let stale_exceptions: Vec<JsonException<'_>> = report
+        .stale_exceptions
+        .iter()
+        .map(JsonException::from_lint)
+        .collect();
+
+    let exception_entries: Vec<JsonException<'_>> =
+        exceptions.iter().map(JsonException::from_lint).collect();
+
+    let json_packages: Vec<JsonPackage<'_>> = packages
+        .iter()
+        .map(|p| JsonPackage {
+            name: &p.name,
+            role: p.role.as_str(),
+        })
+        .collect();
+
+    let matrix: Vec<JsonMatrixRow> = ALL_ROLES
+        .iter()
+        .map(|&r| JsonMatrixRow {
+            consumer_role: r.as_str(),
+            allowed_deps: r.allowed_deps().iter().map(|d| d.as_str()).collect(),
+        })
+        .collect();
+
+    let rules: Vec<JsonRule<'_>> = vec![
+        JsonRule {
+            id: "role-matrix",
+            description:
+                "Every workspace-internal dep edge respects the hex-arch role matrix (or is sanctioned by hex-lint-exceptions.toml).",
+            status: if report.unsanctioned.is_empty() { "pass" } else { "fail" },
+            failure_count: report.unsanctioned.len(),
+        },
+        JsonRule {
+            id: "exceptions-honest",
+            description:
+                "Every entry in hex-lint-exceptions.toml corresponds to a real, current violation (no stale debt).",
+            status: if report.stale_exceptions.is_empty() { "pass" } else { "fail" },
+            failure_count: report.stale_exceptions.len(),
+        },
+    ];
+
+    let out: JsonReport<'_> = JsonReport {
+        version: 1,
+        status: if had_problem { "fail" } else { "pass" },
+        package_count: packages.len(),
+        packages: json_packages,
+        matrix,
+        rules,
+        violations,
+        exceptions: exception_entries,
+        stale_exceptions,
+    };
+
+    match serde_json::to_string_pretty(&out) {
+        Ok(s) => println!("{s}"),
+        Err(e) => {
+            // Fallback: never lose the failure signal.
+            eprintln!("hex-lint: json serialization failed: {e}");
+        }
+    }
+}
+
+const ALL_ROLES: &[Role] = &[
+    Role::Domain,
+    Role::Usecase,
+    Role::PortAndAdapter,
+    Role::DrivenAdapter,
+    Role::DrivingAdapter,
+    Role::Infra,
+    Role::CompositionRoot,
+];
+
+#[derive(Serialize)]
+struct JsonReport<'a> {
+    version: u32,
+    status: &'a str,
+    package_count: usize,
+    packages: Vec<JsonPackage<'a>>,
+    matrix: Vec<JsonMatrixRow<'a>>,
+    rules: Vec<JsonRule<'a>>,
+    violations: Vec<JsonViolation<'a>>,
+    exceptions: Vec<JsonException<'a>>,
+    stale_exceptions: Vec<JsonException<'a>>,
+}
+
+#[derive(Serialize)]
+struct JsonPackage<'a> {
+    name: &'a str,
+    role: &'a str,
+}
+
+#[derive(Serialize)]
+struct JsonMatrixRow<'a> {
+    consumer_role: &'a str,
+    allowed_deps: Vec<&'a str>,
+}
+
+#[derive(Serialize)]
+struct JsonRule<'a> {
+    id: &'a str,
+    description: &'a str,
+    status: &'a str,
+    failure_count: usize,
+}
+
+#[derive(Serialize)]
+struct JsonViolation<'a> {
+    consumer: &'a str,
+    consumer_role: &'a str,
+    dep: &'a str,
+    dep_role: &'a str,
+    sanctioned: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ticket: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+struct JsonException<'a> {
+    consumer: &'a str,
+    dep: &'a str,
+    ticket: &'a str,
+    reason: &'a str,
+}
+
+impl<'a> JsonException<'a> {
+    fn from_lint(e: &'a Exception) -> Self {
+        Self {
+            consumer: &e.consumer,
+            dep: &e.dep,
+            ticket: &e.ticket,
+            reason: &e.reason,
+        }
     }
 }
 
@@ -326,5 +557,56 @@ mod tests {
         assert!(matches!(outcome, ParseOutcome::VersionRequested));
         let outcome = parse_args(args(&["-V"])).expect("ok");
         assert!(matches!(outcome, ParseOutcome::VersionRequested));
+    }
+
+    #[test]
+    fn format_default_is_text() {
+        let outcome = parse_args(args(&[])).expect("ok");
+        let a = match outcome {
+            ParseOutcome::Run(a) => a,
+            _ => panic!("expected Run"),
+        };
+        assert_eq!(a.format.as_str(), "text");
+    }
+
+    #[test]
+    fn format_json_short_and_long() {
+        for raw in [
+            vec!["--format", "json"],
+            vec!["--format=json"],
+            vec!["-f", "json"],
+        ] {
+            let owned: Vec<String> = raw.into_iter().map(String::from).collect();
+            let outcome = parse_args(owned).expect("ok");
+            let a = match outcome {
+                ParseOutcome::Run(a) => a,
+                _ => panic!("expected Run"),
+            };
+            assert_eq!(a.format.as_str(), "json");
+        }
+    }
+
+    #[test]
+    fn format_text_explicit_is_accepted() {
+        let outcome = parse_args(args(&["--format=text"])).expect("ok");
+        let a = match outcome {
+            ParseOutcome::Run(a) => a,
+            _ => panic!("expected Run"),
+        };
+        assert_eq!(a.format.as_str(), "text");
+    }
+
+    #[test]
+    fn format_unknown_is_an_error() {
+        let err = parse_args(args(&["--format=yaml"])).unwrap_err();
+        assert!(err.contains("yaml"), "{err}");
+        let err = parse_args(args(&["-f", "xml"])).unwrap_err();
+        assert!(err.contains("xml"), "{err}");
+    }
+
+    #[test]
+    fn format_missing_value_is_an_error() {
+        assert!(parse_args(args(&["--format"])).is_err());
+        assert!(parse_args(args(&["-f"])).is_err());
     }
 }
