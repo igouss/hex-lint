@@ -9,7 +9,7 @@ This is opinionated. The role matrix is hardcoded. If you want a different matri
 From git (until this lands on crates.io):
 
 ```sh
-cargo install --locked --git https://github.com/REPLACE_ME/hex-lint hex-lint
+cargo install --locked --git https://github.com/igouss/hex-lint hex-lint
 ```
 
 ## Tag your crates
@@ -96,7 +96,7 @@ hex-lint:
     hex-lint
 
 install-hex-lint:
-    cargo install --locked --git https://github.com/REPLACE_ME/hex-lint hex-lint
+    cargo install --locked --git https://github.com/igouss/hex-lint hex-lint
 ```
 
 ## Options
