@@ -64,6 +64,41 @@ The point of the matrix:
 
 If your code doesn't fit, your code is wrong, or your matrix is wrong. Pick one.
 
+## Scope: crate granularity
+
+hex-lint enforces roles at **Cargo workspace-member (crate) granularity**, and that is a deliberate choice, not a missing feature. Each member carries one role; hex-lint tags it, walks the crate dependency graph, and fails any cross-role edge the matrix forbids.
+
+What this means in practice:
+
+- **One role per crate.** If you want a boundary enforced, the two sides have to live in different crates. The crate boundary is the only boundary Rust actually enforces — it's the compilation unit, the visibility wall, and the edge Cargo tracks. A tool that respects it can give you a hard guarantee.
+- **Intra-crate mixing is *not* checked.** A `domain` module importing an `infra` module *inside the same crate* passes clean. hex-lint reads the Cargo dependency graph, not your module tree — it does not parse source. If your `domain` and `infra` code share a crate, they can `use` each other freely and nothing here will stop them.
+
+So if you tag your crates and hex-lint says **clean**, the guarantee is precise: *no forbidden dependency exists between your crates.* It is **not** a claim that the layering inside any single crate is sound. The fix for inside-a-crate layering is to split the crate along the role boundary you care about — then hex-lint enforces it for free. For module-level discipline within one crate, that's clippy/rustc visibility territory, not this tool.
+
+## Explain a role
+
+When a violation fires, hex-lint prints the broken rule and concrete fixes inline. For the full contract of any role on demand:
+
+```sh
+hex-lint explain usecase
+```
+
+```
+hex-lint — role `usecase`
+
+May depend on: domain, usecase, port-and-adapter
+
+Contract:
+    a usecase orchestrates application behavior and may reach the outside world
+    only through ports — never an adapter or infra crate directly.
+
+If hex-lint flags a forbidden dependency out of a `usecase` crate:
+  - Declare the capability you need as a port (trait) in a port-and-adapter crate and depend on that; a driven-adapter implements it.
+  - Let the composition-root inject the concrete implementation — the usecase only ever names the trait.
+```
+
+The same guidance rides along on every violation in `--format=json` (under each violation's `remediation` key), so an agent fixing the build gets the recovery path, not just the failing edge.
+
 ## Exceptions
 
 Real codebases have grandfathered debt. Record it in `hex-lint-exceptions.toml` at the workspace root:
@@ -103,10 +138,12 @@ install-hex-lint:
 
 ```
 hex-lint [OPTIONS]
+hex-lint explain <ROLE>        Print a role's contract and how to fix violations.
 
 OPTIONS:
     -e, --exceptions <PATH>    Exceptions TOML. Default: <workspace-root>/hex-lint-exceptions.toml
         --manifest-path <PATH> Path to a Cargo.toml in the workspace.
+    -f, --format <FMT>         Output format: text (default) or json.
     -h, --help                 Print help.
     -V, --version              Print version.
 ```

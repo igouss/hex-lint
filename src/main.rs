@@ -27,7 +27,7 @@ use std::process::ExitCode;
 use serde::Serialize;
 
 use crate::lint::Exception;
-use crate::role::Role;
+use crate::role::{Remediation, Role};
 
 const DEFAULT_EXCEPTIONS_FILENAME: &str = "hex-lint-exceptions.toml";
 
@@ -46,6 +46,7 @@ struct Args {
 #[cfg_attr(test, derive(Debug))]
 enum ParseOutcome {
     Run(Args),
+    Explain(Role),
     HelpRequested,
     VersionRequested,
 }
@@ -94,6 +95,7 @@ fn print_help() {
     println!();
     println!("USAGE:");
     println!("    hex-lint [OPTIONS]");
+    println!("    hex-lint explain <ROLE>   Print a role's contract and how to fix violations.");
     println!();
     println!("OPTIONS:");
     println!(
@@ -111,6 +113,32 @@ fn print_help() {
     println!("Tag each workspace package's Cargo.toml:");
     println!("    [package.metadata.hex-arch]");
     println!("    role = \"domain\"");
+    println!();
+    println!("SCOPE:");
+    println!("    Roles are enforced at CRATE granularity. Each workspace member gets one");
+    println!("    role and the crate dependency graph is checked against the matrix. Mixing");
+    println!("    roles inside a single crate is NOT enforced — split it into one crate per");
+    println!("    role if you want the boundary checked.");
+}
+
+fn print_explain(role: Role) {
+    let rem: Remediation = role.remediation();
+    let allowed: Vec<&'static str> = role.allowed_deps().iter().map(|r| r.as_str()).collect();
+
+    println!("hex-lint — role `{}`", role.as_str());
+    println!();
+    println!("May depend on: {}", allowed.join(", "));
+    println!();
+    println!("Contract:");
+    println!("    {}", rem.rule);
+    println!();
+    println!(
+        "If hex-lint flags a forbidden dependency out of a `{}` crate:",
+        role.as_str()
+    );
+    for fix in rem.fixes {
+        println!("  - {fix}");
+    }
 }
 
 fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<ParseOutcome, String> {
@@ -123,6 +151,14 @@ fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<ParseOutcome, S
         match arg.as_str() {
             "-h" | "--help" => return Ok(ParseOutcome::HelpRequested),
             "-V" | "--version" => return Ok(ParseOutcome::VersionRequested),
+            "explain" => {
+                let v: String = it
+                    .next()
+                    .ok_or_else(|| "explain requires a role name".to_owned())?;
+                let role: Role = Role::parse(&v)
+                    .ok_or_else(|| format!("unknown role `{v}` — see `hex-lint --help`"))?;
+                return Ok(ParseOutcome::Explain(role));
+            }
             "-e" | "--exceptions" => {
                 let v: String = it
                     .next()
@@ -166,6 +202,10 @@ fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<ParseOutcome, S
 fn main() -> ExitCode {
     let args: Args = match parse_args(env::args().skip(1)) {
         Ok(ParseOutcome::Run(a)) => a,
+        Ok(ParseOutcome::Explain(role)) => {
+            print_explain(role);
+            return ExitCode::SUCCESS;
+        }
         Ok(ParseOutcome::HelpRequested) => {
             print_help();
             return ExitCode::SUCCESS;
@@ -258,7 +298,16 @@ fn render_text(
                 v.dep,
                 v.dep_role.as_str()
             );
+            let rem: Remediation = v.consumer_role.remediation();
+            eprintln!("    why: {}", rem.rule);
+            for fix in rem.fixes {
+                eprintln!("    fix: {fix}");
+            }
         }
+        eprintln!(
+            "    (run `hex-lint explain {}` for the full role contract)",
+            report.unsanctioned[0].consumer_role.as_str()
+        );
     }
 
     if !report.stale_exceptions.is_empty() {
@@ -298,6 +347,7 @@ fn render_json(
         .iter()
         .map(|v| {
             let exc: Option<&&Exception> = exc_by_key.get(&(v.consumer.as_str(), v.dep.as_str()));
+            let rem: Remediation = v.consumer_role.remediation();
             JsonViolation {
                 consumer: &v.consumer,
                 consumer_role: v.consumer_role.as_str(),
@@ -306,6 +356,10 @@ fn render_json(
                 sanctioned: exc.is_some(),
                 ticket: exc.map(|e| e.ticket.as_str()),
                 reason: exc.map(|e| e.reason.as_str()),
+                remediation: JsonRemediation {
+                    rule: rem.rule,
+                    fixes: rem.fixes,
+                },
             }
         })
         .collect();
@@ -427,6 +481,13 @@ struct JsonViolation<'a> {
     ticket: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<&'a str>,
+    remediation: JsonRemediation<'a>,
+}
+
+#[derive(Serialize)]
+struct JsonRemediation<'a> {
+    rule: &'a str,
+    fixes: &'a [&'a str],
 }
 
 #[derive(Serialize)]
@@ -451,6 +512,7 @@ impl<'a> JsonException<'a> {
 #[cfg(test)]
 mod tests {
     use super::{parse_args, ParseOutcome};
+    use crate::role::Role;
 
     fn args(slice: &[&str]) -> Vec<String> {
         slice.iter().map(|s| (*s).to_owned()).collect()
@@ -608,5 +670,25 @@ mod tests {
     fn format_missing_value_is_an_error() {
         assert!(parse_args(args(&["--format"])).is_err());
         assert!(parse_args(args(&["-f"])).is_err());
+    }
+
+    #[test]
+    fn explain_parses_role() {
+        let outcome = parse_args(args(&["explain", "usecase"])).expect("ok");
+        match outcome {
+            ParseOutcome::Explain(role) => assert_eq!(role, Role::Usecase),
+            _ => panic!("expected Explain"),
+        }
+    }
+
+    #[test]
+    fn explain_unknown_role_is_an_error() {
+        let err = parse_args(args(&["explain", "nonsense"])).unwrap_err();
+        assert!(err.contains("nonsense"), "{err}");
+    }
+
+    #[test]
+    fn explain_missing_role_is_an_error() {
+        assert!(parse_args(args(&["explain"])).is_err());
     }
 }
