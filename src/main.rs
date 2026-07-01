@@ -15,6 +15,7 @@
 #![allow(clippy::print_stderr, reason = "this IS a CLI tool")]
 #![allow(clippy::print_stdout, reason = "this IS a CLI tool")]
 
+mod context;
 mod exceptions;
 mod lint;
 mod remediation;

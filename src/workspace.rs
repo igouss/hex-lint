@@ -70,6 +70,8 @@ pub fn load(manifest_path: Option<&Path>) -> Result<Workspace, LoadError> {
             Ok(role) => packages.push(WorkspacePackage {
                 name: pkg.name.to_string(),
                 role,
+                // Placeholder: real context extraction lands in the next bead.
+                context: None,
             }),
             Err(why) => bad_roles.push((pkg.name.to_string(), why)),
         }

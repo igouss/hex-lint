@@ -13,12 +13,15 @@ use serde::Deserialize;
 
 use crate::role::Role;
 
-/// A workspace package paired with its declared role. Built by the
-/// cargo-metadata adapter; consumed by the checks.
+/// A workspace package paired with its declared role and optional bounded
+/// context. Built by the cargo-metadata adapter; consumed by the checks. The
+/// `context` is `None` until a member opts into the context axis; the context
+/// domain (`context.rs`) reads it to decide adoption and legality.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkspacePackage {
     pub name: String,
     pub role: Role,
+    pub context: Option<String>,
 }
 
 /// A workspace-internal dependency edge (runtime or build, not dev).

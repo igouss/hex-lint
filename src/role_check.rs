@@ -70,6 +70,7 @@ mod tests {
         WorkspacePackage {
             name: name.to_owned(),
             role,
+            context: None,
         }
     }
 
