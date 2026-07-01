@@ -8,11 +8,6 @@
 //! role axis, and vice versa. The only shared foundation is the neutral
 //! `WorkspacePackage` DTO and the axis-neutral `Remediation`.
 
-#![allow(
-    dead_code,
-    reason = "this bead lands the context domain on its own; its consumers — the context use case (context_check.rs) and the composition root (main.rs) — wire these in the following beads"
-)]
-
 use crate::lint::WorkspacePackage;
 use crate::remediation::Remediation;
 

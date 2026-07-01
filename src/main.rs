@@ -30,7 +30,7 @@ use std::process::ExitCode;
 
 use serde::Serialize;
 
-use crate::lint::Exception;
+use crate::lint::{Axis, Exception};
 use crate::remediation::Remediation;
 use crate::role::Role;
 
@@ -245,6 +245,22 @@ fn main() -> ExitCode {
         }
     };
 
+    // Resolve context-axis adoption before running any check. Partial adoption
+    // (some members declare a context, some do not) is meaningless, so abort
+    // hard — mirroring the missing/bad-role abort above — and name the crates
+    // that still lack a context.
+    let adoption: context::Adoption = context::adoption(&ws.packages);
+    if let context::Adoption::Partial(missing) = &adoption {
+        eprintln!(
+            "hex-lint: context declared on some but not all workspace packages (partial adoption is a hard error); these lack context:"
+        );
+        for name in missing {
+            eprintln!("  {name}");
+        }
+        return ExitCode::FAILURE;
+    }
+    let context_enabled: bool = matches!(adoption, context::Adoption::Enabled);
+
     // Resolve exceptions path. Explicit --exceptions: missing file is an
     // error. Default path (workspace root): missing file means "no exceptions".
     let exceptions_required: bool = args.exceptions.is_some();
@@ -272,13 +288,31 @@ fn main() -> ExitCode {
         }
     };
 
-    let report: lint::AxisReport<role_check::RoleViolation> =
+    let role_report: lint::AxisReport<role_check::RoleViolation> =
         role_check::run(&ws.packages, &ws.edges, &exceptions);
-    let had_problem: bool = !report.unsanctioned.is_empty() || !report.stale_exceptions.is_empty();
+    let context_report: lint::AxisReport<context_check::ContextViolation> =
+        context_check::run(&ws.packages, &ws.edges, &exceptions);
+    let had_problem: bool = !role_report.unsanctioned.is_empty()
+        || !role_report.stale_exceptions.is_empty()
+        || !context_report.unsanctioned.is_empty()
+        || !context_report.stale_exceptions.is_empty();
 
     match args.format {
-        Format::Text => render_text(&ws.packages, &report, &exceptions, had_problem),
-        Format::Json => render_json(&ws.packages, &report, &exceptions, had_problem),
+        Format::Text => render_text(
+            &ws.packages,
+            &role_report,
+            &context_report,
+            &exceptions,
+            context_enabled,
+            had_problem,
+        ),
+        Format::Json => render_json(
+            &ws.packages,
+            &role_report,
+            &context_report,
+            &exceptions,
+            had_problem,
+        ),
     }
 
     if had_problem {
@@ -290,13 +324,15 @@ fn main() -> ExitCode {
 
 fn render_text(
     packages: &[lint::WorkspacePackage],
-    report: &lint::AxisReport<role_check::RoleViolation>,
+    role_report: &lint::AxisReport<role_check::RoleViolation>,
+    context_report: &lint::AxisReport<context_check::ContextViolation>,
     exceptions: &[Exception],
+    context_enabled: bool,
     had_problem: bool,
 ) {
-    if !report.unsanctioned.is_empty() {
+    if !role_report.unsanctioned.is_empty() {
         eprintln!("hex-lint: unsanctioned hex-arch role violations (not in exceptions file):");
-        for v in &report.unsanctioned {
+        for v in &role_report.unsanctioned {
             eprintln!(
                 "  {} ({}) -> {} ({}): forbidden",
                 v.consumer,
@@ -312,14 +348,42 @@ fn render_text(
         }
         eprintln!(
             "    (run `hex-lint explain {}` for the full role contract)",
-            report.unsanctioned[0].consumer_role.as_str()
+            role_report.unsanctioned[0].consumer_role.as_str()
         );
     }
 
-    if !report.stale_exceptions.is_empty() {
+    if !role_report.stale_exceptions.is_empty() {
         eprintln!("hex-lint: exceptions file entries that no longer match a real violation:");
         eprintln!("(remove them — debt paid off?)");
-        for e in &report.stale_exceptions {
+        for e in &role_report.stale_exceptions {
+            eprintln!(
+                "  {} -> {}  [ticket={} reason={}]",
+                e.consumer, e.dep, e.ticket, e.reason
+            );
+        }
+    }
+
+    if !context_report.unsanctioned.is_empty() {
+        eprintln!("hex-lint: unsanctioned context-isolation violations (not in exceptions file):");
+        for v in &context_report.unsanctioned {
+            eprintln!(
+                "  {} [{}] -> {} [{}]: forbidden",
+                v.consumer, v.consumer_context, v.dep, v.dep_context
+            );
+        }
+        let rem: Remediation = context::remediation();
+        eprintln!("    why: {}", rem.rule);
+        for fix in rem.fixes {
+            eprintln!("    fix: {fix}");
+        }
+    }
+
+    if !context_report.stale_exceptions.is_empty() {
+        eprintln!(
+            "hex-lint: context-axis exceptions file entries that no longer match a real violation:"
+        );
+        eprintln!("(remove them — debt paid off?)");
+        for e in &context_report.stale_exceptions {
             eprintln!(
                 "  {} -> {}  [ticket={} reason={}]",
                 e.consumer, e.dep, e.ticket, e.reason
@@ -331,37 +395,59 @@ fn render_text(
         println!(
             "hex-lint: clean ({} workspace packages, {} active violation(s) all sanctioned by {} exception(s))",
             packages.len(),
-            report.violations.len(),
+            role_report.violations.len(),
             exceptions.len()
         );
+        if context_enabled {
+            let context_exception_count: usize = exceptions
+                .iter()
+                .filter(|e: &&Exception| e.axis == Axis::Context)
+                .count();
+            println!(
+                "hex-lint: context isolation clean ({} active violation(s) all sanctioned by {} exception(s))",
+                context_report.violations.len(),
+                context_exception_count
+            );
+        }
     }
 }
 
 fn render_json(
     packages: &[lint::WorkspacePackage],
-    report: &lint::AxisReport<role_check::RoleViolation>,
+    role_report: &lint::AxisReport<role_check::RoleViolation>,
+    context_report: &lint::AxisReport<context_check::ContextViolation>,
     exceptions: &[Exception],
     had_problem: bool,
 ) {
-    let exc_by_key: std::collections::BTreeMap<(&str, &str), &Exception> = exceptions
+    // The exception->violation join is axis-aware: a role exception may only
+    // annotate a role violation, a context exception only a context violation.
+    let role_exc_by_key: std::collections::BTreeMap<(&str, &str), &Exception> = exceptions
         .iter()
-        .map(|e| ((e.consumer.as_str(), e.dep.as_str()), e))
+        .filter(|e: &&Exception| e.axis == Axis::Role)
+        .map(|e: &Exception| ((e.consumer.as_str(), e.dep.as_str()), e))
+        .collect();
+    let context_exc_by_key: std::collections::BTreeMap<(&str, &str), &Exception> = exceptions
+        .iter()
+        .filter(|e: &&Exception| e.axis == Axis::Context)
+        .map(|e: &Exception| ((e.consumer.as_str(), e.dep.as_str()), e))
         .collect();
 
-    let violations: Vec<JsonViolation<'_>> = report
+    let violations: Vec<JsonViolation<'_>> = role_report
         .violations
         .iter()
-        .map(|v| {
-            let exc: Option<&&Exception> = exc_by_key.get(&(v.consumer.as_str(), v.dep.as_str()));
+        .map(|v: &role_check::RoleViolation| {
+            let exc: Option<&&Exception> =
+                role_exc_by_key.get(&(v.consumer.as_str(), v.dep.as_str()));
             let rem: Remediation = v.consumer_role.remediation();
             JsonViolation {
+                axis: Axis::Role,
                 consumer: &v.consumer,
                 consumer_role: v.consumer_role.as_str(),
                 dep: &v.dep,
                 dep_role: v.dep_role.as_str(),
                 sanctioned: exc.is_some(),
-                ticket: exc.map(|e| e.ticket.as_str()),
-                reason: exc.map(|e| e.reason.as_str()),
+                ticket: exc.map(|e: &&Exception| e.ticket.as_str()),
+                reason: exc.map(|e: &&Exception| e.reason.as_str()),
                 remediation: JsonRemediation {
                     rule: rem.rule,
                     fixes: rem.fixes,
@@ -370,7 +456,37 @@ fn render_json(
         })
         .collect();
 
-    let stale_exceptions: Vec<JsonException<'_>> = report
+    let context_rem: Remediation = context::remediation();
+    let context_violations: Vec<JsonContextViolation<'_>> = context_report
+        .violations
+        .iter()
+        .map(|v: &context_check::ContextViolation| {
+            let exc: Option<&&Exception> =
+                context_exc_by_key.get(&(v.consumer.as_str(), v.dep.as_str()));
+            JsonContextViolation {
+                axis: Axis::Context,
+                consumer: &v.consumer,
+                consumer_context: &v.consumer_context,
+                dep: &v.dep,
+                dep_context: &v.dep_context,
+                sanctioned: exc.is_some(),
+                ticket: exc.map(|e: &&Exception| e.ticket.as_str()),
+                reason: exc.map(|e: &&Exception| e.reason.as_str()),
+                remediation: JsonRemediation {
+                    rule: context_rem.rule,
+                    fixes: context_rem.fixes,
+                },
+            }
+        })
+        .collect();
+
+    let stale_exceptions: Vec<JsonException<'_>> = role_report
+        .stale_exceptions
+        .iter()
+        .map(JsonException::from_lint)
+        .collect();
+
+    let context_stale_exceptions: Vec<JsonException<'_>> = context_report
         .stale_exceptions
         .iter()
         .map(JsonException::from_lint)
@@ -381,17 +497,18 @@ fn render_json(
 
     let json_packages: Vec<JsonPackage<'_>> = packages
         .iter()
-        .map(|p| JsonPackage {
+        .map(|p: &lint::WorkspacePackage| JsonPackage {
             name: &p.name,
             role: p.role.as_str(),
+            context: p.context.as_deref(),
         })
         .collect();
 
     let matrix: Vec<JsonMatrixRow> = ALL_ROLES
         .iter()
-        .map(|&r| JsonMatrixRow {
+        .map(|&r: &Role| JsonMatrixRow {
             consumer_role: r.as_str(),
-            allowed_deps: r.allowed_deps().iter().map(|d| d.as_str()).collect(),
+            allowed_deps: r.allowed_deps().iter().map(|d: &Role| d.as_str()).collect(),
         })
         .collect();
 
@@ -400,15 +517,22 @@ fn render_json(
             id: "role-matrix",
             description:
                 "Every workspace-internal dep edge respects the hex-arch role matrix (or is sanctioned by hex-lint-exceptions.toml).",
-            status: if report.unsanctioned.is_empty() { "pass" } else { "fail" },
-            failure_count: report.unsanctioned.len(),
+            status: if role_report.unsanctioned.is_empty() { "pass" } else { "fail" },
+            failure_count: role_report.unsanctioned.len(),
         },
         JsonRule {
             id: "exceptions-honest",
             description:
                 "Every entry in hex-lint-exceptions.toml corresponds to a real, current violation (no stale debt).",
-            status: if report.stale_exceptions.is_empty() { "pass" } else { "fail" },
-            failure_count: report.stale_exceptions.len(),
+            status: if role_report.stale_exceptions.is_empty() { "pass" } else { "fail" },
+            failure_count: role_report.stale_exceptions.len(),
+        },
+        JsonRule {
+            id: "context-isolation",
+            description:
+                "Every workspace-internal dep edge respects bounded-context isolation (same context, or the dependency is shared; or is sanctioned by hex-lint-exceptions.toml).",
+            status: if context_report.unsanctioned.is_empty() { "pass" } else { "fail" },
+            failure_count: context_report.unsanctioned.len(),
         },
     ];
 
@@ -420,8 +544,10 @@ fn render_json(
         matrix,
         rules,
         violations,
+        context_violations,
         exceptions: exception_entries,
         stale_exceptions,
+        context_stale_exceptions,
     };
 
     match serde_json::to_string_pretty(&out) {
@@ -452,14 +578,18 @@ struct JsonReport<'a> {
     matrix: Vec<JsonMatrixRow<'a>>,
     rules: Vec<JsonRule<'a>>,
     violations: Vec<JsonViolation<'a>>,
+    context_violations: Vec<JsonContextViolation<'a>>,
     exceptions: Vec<JsonException<'a>>,
     stale_exceptions: Vec<JsonException<'a>>,
+    context_stale_exceptions: Vec<JsonException<'a>>,
 }
 
 #[derive(Serialize)]
 struct JsonPackage<'a> {
     name: &'a str,
     role: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -478,10 +608,26 @@ struct JsonRule<'a> {
 
 #[derive(Serialize)]
 struct JsonViolation<'a> {
+    axis: Axis,
     consumer: &'a str,
     consumer_role: &'a str,
     dep: &'a str,
     dep_role: &'a str,
+    sanctioned: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ticket: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'a str>,
+    remediation: JsonRemediation<'a>,
+}
+
+#[derive(Serialize)]
+struct JsonContextViolation<'a> {
+    axis: Axis,
+    consumer: &'a str,
+    consumer_context: &'a str,
+    dep: &'a str,
+    dep_context: &'a str,
     sanctioned: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     ticket: Option<&'a str>,
@@ -500,6 +646,7 @@ struct JsonRemediation<'a> {
 struct JsonException<'a> {
     consumer: &'a str,
     dep: &'a str,
+    axis: Axis,
     ticket: &'a str,
     reason: &'a str,
 }
@@ -509,6 +656,7 @@ impl<'a> JsonException<'a> {
         Self {
             consumer: &e.consumer,
             dep: &e.dep,
+            axis: e.axis,
             ticket: &e.ticket,
             reason: &e.reason,
         }

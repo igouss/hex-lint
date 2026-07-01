@@ -9,7 +9,7 @@
 
 use std::collections::BTreeSet;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::role::Role;
 
@@ -33,7 +33,7 @@ pub struct DepEdge {
 
 /// Which check an exception sanctions. Defaults to `Role` so exception files
 /// written before the context axis existed keep parsing unchanged.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Axis {
     #[default]

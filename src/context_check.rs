@@ -6,11 +6,6 @@
 //! axis-agnostic exception bookkeeping. This file is the context axis and only
 //! the context axis — deleting it must not touch the role axis.
 
-#![allow(
-    dead_code,
-    reason = "this bead lands the context use case on its own; its consumer — the composition root (main.rs) — wires `run` and `ContextViolation` in the following bead"
-)]
-
 use std::collections::BTreeMap;
 
 use crate::context;
