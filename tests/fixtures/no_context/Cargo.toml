@@ -1,0 +1,7 @@
+# Regression fixture: roles only, no `context` declared anywhere.
+# Every edge is role-legal, so hex-lint reports a clean run. This fixture
+# regression-locks the opt-in guarantee: with zero contexts, output is
+# byte-identical to the pre-context-check tool (see tests/golden/no_context.txt).
+[workspace]
+resolver = "2"
+members = ["domain", "ports", "core", "app"]

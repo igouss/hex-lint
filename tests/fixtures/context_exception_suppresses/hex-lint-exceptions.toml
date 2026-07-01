@@ -1,0 +1,7 @@
+# Sanctions the cross-context edge on the CONTEXT axis: the run is clean.
+[[exception]]
+consumer = "shopping-reactor"
+dep      = "pantry-shell"
+axis     = "context"
+ticket   = "ARCH-42"
+reason   = "temporary cross-context bridge during the pantry extraction"

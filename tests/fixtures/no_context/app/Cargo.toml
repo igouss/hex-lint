@@ -1,0 +1,13 @@
+[package]
+name = "app"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata.hex-arch]
+role = "composition-root"
+
+[dependencies]
+domain = { path = "../domain" }
+ports = { path = "../ports" }
+core = { path = "../core" }

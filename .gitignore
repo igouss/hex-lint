@@ -1,4 +1,7 @@
 /target
+# Fixture workspaces resolve their own graphs during integration tests; keep any
+# build output they produce out of version control (the Cargo.lock files stay).
+tests/fixtures/**/target/
 **/*.rs.bk
 .idea/
 .vscode/

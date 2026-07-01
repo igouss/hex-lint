@@ -1,0 +1,9 @@
+# Sanctions the SAME edge on the ROLE axis. Routed to the wrong axis, it does
+# NOT suppress the context violation (and is itself stale on the role axis,
+# since driving-adapter -> usecase is already role-legal).
+[[exception]]
+consumer = "shopping-reactor"
+dep      = "pantry-shell"
+axis     = "role"
+ticket   = "ARCH-99"
+reason   = "a role-axis exception must not touch the context axis"

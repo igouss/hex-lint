@@ -1,0 +1,8 @@
+# Stale on the CONTEXT axis: shopping-usecase -> ghost-crate is not a real edge,
+# so no violation matches this entry and hex-lint flags it as debt to remove.
+[[exception]]
+consumer = "shopping-usecase"
+dep      = "ghost-crate"
+axis     = "context"
+ticket   = "ARCH-7"
+reason   = "the offending edge was deleted; this entry should be too"

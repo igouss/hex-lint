@@ -1,0 +1,6 @@
+# Acceptance #5: `contracts` (port-and-adapter, shared) depends on
+# `pantry-core` (domain, pantry). Role legal (port-and-adapter -> domain), but
+# a `shared` crate may depend only on `shared`, so the CONTEXT axis fails.
+[workspace]
+resolver = "2"
+members = ["contracts", "pantry-core"]

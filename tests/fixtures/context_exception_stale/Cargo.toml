@@ -1,0 +1,6 @@
+# Acceptance #7b: hex-lint-exceptions.toml carries a context-axis exception for
+# an edge that is not a real violation (the workspace is clean). The exception
+# is stale, so hex-lint fails and asks for it to be removed.
+[workspace]
+resolver = "2"
+members = ["shopping-usecase", "shopping-domain"]

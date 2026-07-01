@@ -1,0 +1,5 @@
+# Acceptance #2: every member declares a context and every edge is either
+# same-context or reaches a `shared` crate. hex-lint reports both axes clean.
+[workspace]
+resolver = "2"
+members = ["shopping-domain", "shopping-usecase", "pantry-domain", "pantry-usecase", "contracts"]

@@ -1,0 +1,6 @@
+# Acceptance #6: `unlabeled` omits `context` while the others declare it.
+# Partial adoption is meaningless, so hex-lint aborts hard and names the crate
+# that still lacks a context, before running either check.
+[workspace]
+resolver = "2"
+members = ["shopping-domain", "shopping-usecase", "unlabeled"]

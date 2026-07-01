@@ -1,0 +1,6 @@
+# Acceptance #4: a `shopping` crate depends on `contracts` (port-and-adapter,
+# shared). Role legal (usecase -> port-and-adapter) and context legal (any
+# context may depend on `shared`), so both axes pass.
+[workspace]
+resolver = "2"
+members = ["shopping-usecase", "contracts"]

@@ -1,0 +1,7 @@
+# Acceptance #7a: the cross-context edge shopping-reactor -> pantry-shell is
+# sanctioned by a context-axis exception (hex-lint-exceptions.toml), so the run
+# is clean. role-exception.toml sanctions the SAME edge on the role axis; run
+# with it and the context violation is NOT suppressed (per-axis routing).
+[workspace]
+resolver = "2"
+members = ["shopping-reactor", "pantry-shell", "pantry-domain"]

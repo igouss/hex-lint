@@ -1,0 +1,7 @@
+# Acceptance #3 (load-bearing): `shopping-reactor` (driving-adapter, shopping)
+# depends on `pantry-shell` (usecase, pantry). The role matrix permits
+# driving-adapter -> usecase, so the ROLE axis passes; the contexts differ, so
+# the CONTEXT axis fails. This is the whole point of the second check.
+[workspace]
+resolver = "2"
+members = ["shopping-reactor", "pantry-shell", "pantry-domain"]
