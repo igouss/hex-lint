@@ -6,9 +6,14 @@
 //! [[exception]]
 //! consumer = "my-domain"
 //! dep      = "legacy-helper"
+//! axis     = "context"   # optional: "role" (the default) or "context"
 //! ticket   = "ARCH-1234"
 //! reason   = "deleting after the rewrite lands"
 //! ```
+//!
+//! `axis` is optional and defaults to `"role"`, so files written before the
+//! context axis existed keep parsing unchanged; each check reads only the
+//! exceptions tagged with its own axis.
 
 use std::io;
 use std::path::Path;

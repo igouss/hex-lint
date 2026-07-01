@@ -75,6 +75,39 @@ What this means in practice:
 
 So if you tag your crates and hex-lint says **clean**, the guarantee is precise: *no forbidden dependency exists between your crates.* It is **not** a claim that the layering inside any single crate is sound. The fix for inside-a-crate layering is to split the crate along the role boundary you care about — then hex-lint enforces it for free. For module-level discipline within one crate, that's clippy/rustc visibility territory, not this tool.
 
+## Context isolation
+
+The matrix proves your dependency arrows respect *layer* direction. It is blind to *bounded contexts*: a `driving-adapter` in your `shopping` context may, per matrix, legally depend on a `usecase` in your `pantry` context — legal by layer, forbidden by architecture. Context isolation is a second, orthogonal check over the same edge set that closes that gap. It is off until you ask for it.
+
+Tag a crate with a context alongside its role:
+
+```toml
+[package.metadata.hex-arch]
+role    = "usecase"
+context = "shopping"
+```
+
+**The rule is one total predicate.** An edge `consumer → dep` passes iff `consumer.context == dep.context` **or** `dep.context == "shared"`. That single line already subsumes "a shared crate may depend only on shared": a `shared` consumer passes only when its dependency is also `shared`. `"shared"` is the one reserved context name — any crate may depend on it, and it may depend only on itself. Every other name is free-form; call your contexts whatever your domain calls them.
+
+**It is opt-in, and it is all-or-nothing.** Declare zero contexts and the axis is off — the run is byte-for-byte what it was before, roles only. Declare a context on *every* workspace member and the axis is on. Declare one on *some but not all* members and hex-lint refuses to run: **partial adoption is a hard error** that names the crates missing a context and exits non-zero before any check runs. This mirrors roles, where a member without a role is already a hard error.
+
+**Exceptions are the same file and the same schema.** Grandfathered cross-context debt goes in `hex-lint-exceptions.toml` next to your role debt, tagged with `axis = "context"`:
+
+```toml
+[[exception]]
+consumer = "shopping-reactor"
+dep      = "pantry-shell"
+axis     = "context"
+ticket   = "ARCH-42"
+reason   = "temporary reach-in until the shared contract is extracted"
+```
+
+`axis` defaults to `"role"` when omitted, so every exception file written before this feature keeps parsing unchanged. Each check reads only its own axis: a `role` exception never suppresses a context violation, and vice versa. And exactly as with roles, a context exception that no longer matches a real violation is **stale** and fails the lint. The file rots loud on both axes.
+
+**What a green run certifies — precisely.** hex-lint enumerates the *full* `cargo metadata` dependency graph, and both predicates are **total**: role-matrix membership is defined for every (consumer, dep) role pair, and context equality-or-`shared` is defined for every context pair. There is no sampling, no heuristic, no approximation in either direction. So when hex-lint says clean, then over the crates *as you tagged them* no forbidden edge exists, on either axis. The one thing it cannot check is whether you tagged them correctly: a crate wearing the wrong `context` is a **user bug, not a tool bug**. That is the whole claim, and no more.
+
+**One named limitation.** Context isolation is enforced at the **crate-dependency level only** — the same granularity as roles, for the same reason: the crate is the only boundary Cargo tracks. A foreign type copy-pasted *inside* a crate, or two contexts sharing one crate and `use`-ing each other freely, is out of scope. hex-lint reads the dependency graph, not your source. If you want a context boundary enforced, the two sides have to live in different crates.
+
 ## Explain a role
 
 When a violation fires, hex-lint prints the broken rule and concrete fixes inline. For the full contract of any role on demand:
@@ -107,11 +140,12 @@ Real codebases have grandfathered debt. Record it in `hex-lint-exceptions.toml` 
 [[exception]]
 consumer = "my-usecase-crate"
 dep = "my-driven-adapter-crate"
+axis = "role"   # optional: "role" (the default) or "context"
 ticket = "JIRA-1234"
 reason = "Will be cleaned up when we extract the port — see ticket."
 ```
 
-`ticket` and `reason` are documentation only — the lint doesn't read them. They're for the next person who opens this file in six months.
+`axis` selects which check the exception belongs to and defaults to `"role"`, so this same file holds both role and context debt (see [Context isolation](#context-isolation)). `ticket` and `reason` are documentation only — the lint doesn't read them. They're for the next person who opens this file in six months.
 
 The file location can be overridden with `--exceptions <PATH>`. If no `--exceptions` flag is given and the default file is missing, hex-lint runs with zero exceptions (which is the right default for a clean codebase).
 
