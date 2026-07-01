@@ -1,17 +1,20 @@
-//! Use case: compute hex-arch lint report from a workspace snapshot and a
-//! list of sanctioned exceptions.
+//! Use-case core: the axis-agnostic plumbing both architecture checks stand on.
 //!
-//! Pure: no IO, no framework. The adapters in `workspace.rs` and
-//! `exceptions.rs` build the inputs; this function decides the verdict.
+//! Pure: no IO, no framework. Holds the shared DTOs built by the adapters
+//! (`workspace.rs`, `exceptions.rs`), the `Axis` tag that routes an exception
+//! to a check, a generic per-axis report, and the generic exception
+//! reconciliation (unsanctioned + stale set arithmetic). It knows nothing
+//! about roles or contexts — each axis lives in its own use-case file and
+//! stands on this shared plumbing.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use serde::Deserialize;
 
 use crate::role::Role;
 
 /// A workspace package paired with its declared role. Built by the
-/// cargo-metadata adapter; consumed by the lint use case.
+/// cargo-metadata adapter; consumed by the checks.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkspacePackage {
     pub name: String,
@@ -25,86 +28,70 @@ pub struct DepEdge {
     pub dep: String,
 }
 
-/// A sanctioned violation: "yes, $consumer depends on $dep against the
-/// matrix, here is the ticket and reason."
+/// Which check an exception sanctions. Defaults to `Role` so exception files
+/// written before the context axis existed keep parsing unchanged.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum Axis {
+    #[default]
+    Role,
+    Context,
+}
+
+/// A sanctioned violation: "yes, $consumer depends on $dep against the $axis
+/// rule, here is the ticket and reason."
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 pub struct Exception {
     pub consumer: String,
     pub dep: String,
+    #[serde(default)]
+    pub axis: Axis,
     pub ticket: String,
     pub reason: String,
 }
 
-/// One matrix violation with both roles attached for reporting.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Violation {
-    pub consumer: String,
-    pub consumer_role: Role,
-    pub dep: String,
-    pub dep_role: Role,
-}
-
-/// Output of the lint use case.
+/// Output of one axis check. Generic over the axis's violation type so both
+/// checks share the reporting shape without sharing their violation vocab.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct LintReport {
-    /// All matrix violations, sanctioned or not.
-    pub violations: Vec<Violation>,
-    /// Violations not covered by any exception.
-    pub unsanctioned: Vec<Violation>,
-    /// Exceptions that no longer match any real violation — debt paid off.
+pub struct AxisReport<V> {
+    /// All violations on this axis, sanctioned or not.
+    pub violations: Vec<V>,
+    /// Violations not covered by any exception on this axis.
+    pub unsanctioned: Vec<V>,
+    /// This-axis exceptions that no longer match a real violation — debt paid off.
     pub stale_exceptions: Vec<Exception>,
 }
 
-/// Run the lint. `packages` MUST be the full set of workspace members; any
-/// edge whose consumer or dep isn't in `packages` is dropped (foreign edge).
-pub fn run(
-    packages: &[WorkspacePackage],
-    edges: &[DepEdge],
-    exceptions: &[Exception],
-) -> LintReport {
-    let role_by_name: BTreeMap<&str, Role> =
-        packages.iter().map(|p| (p.name.as_str(), p.role)).collect();
-
-    let mut violations: Vec<Violation> = Vec::new();
-    for edge in edges {
-        let (Some(&cr), Some(&dr)) = (
-            role_by_name.get(edge.consumer.as_str()),
-            role_by_name.get(edge.dep.as_str()),
-        ) else {
-            continue;
-        };
-        if !cr.allowed_deps().contains(&dr) {
-            violations.push(Violation {
-                consumer: edge.consumer.clone(),
-                consumer_role: cr,
-                dep: edge.dep.clone(),
-                dep_role: dr,
-            });
-        }
-    }
-
-    let viol_keys: BTreeSet<(&str, &str)> = violations
+/// Axis-agnostic exception bookkeeping. Given this axis's raw violations and
+/// the exceptions already filtered to this axis, split violations into
+/// sanctioned/unsanctioned and surface exceptions that match no violation
+/// (stale). `key` projects a violation to its `(consumer, dep)` identity; this
+/// function never mentions roles or contexts.
+pub fn reconcile<V: Clone>(
+    violations: Vec<V>,
+    axis_exceptions: &[&Exception],
+    key: impl Fn(&V) -> (String, String),
+) -> AxisReport<V> {
+    let viol_keys: BTreeSet<(String, String)> = violations.iter().map(|v: &V| key(v)).collect();
+    let exc_keys: BTreeSet<(String, String)> = axis_exceptions
         .iter()
-        .map(|v| (v.consumer.as_str(), v.dep.as_str()))
-        .collect();
-    let exc_keys: BTreeSet<(&str, &str)> = exceptions
-        .iter()
-        .map(|e| (e.consumer.as_str(), e.dep.as_str()))
+        .map(|e: &&Exception| (e.consumer.clone(), e.dep.clone()))
         .collect();
 
-    let unsanctioned: Vec<Violation> = violations
+    let unsanctioned: Vec<V> = violations
         .iter()
-        .filter(|v| !exc_keys.contains(&(v.consumer.as_str(), v.dep.as_str())))
+        .filter(|v: &&V| !exc_keys.contains(&key(v)))
         .cloned()
         .collect();
 
-    let stale_exceptions: Vec<Exception> = exceptions
+    let stale_exceptions: Vec<Exception> = axis_exceptions
         .iter()
-        .filter(|e| !viol_keys.contains(&(e.consumer.as_str(), e.dep.as_str())))
+        .copied()
+        .filter(|e: &&Exception| !viol_keys.contains(&(e.consumer.clone(), e.dep.clone())))
         .cloned()
         .collect();
 
-    LintReport {
+    AxisReport {
         violations,
         unsanctioned,
         stale_exceptions,
@@ -113,77 +100,55 @@ pub fn run(
 
 #[cfg(test)]
 mod tests {
-    use super::{run, DepEdge, Exception, LintReport, Violation, WorkspacePackage};
-    use crate::role::Role;
+    use super::{reconcile, Axis, AxisReport, Exception};
 
-    fn pkg(name: &str, role: Role) -> WorkspacePackage {
-        WorkspacePackage {
-            name: name.to_owned(),
-            role,
-        }
-    }
-
-    fn edge(consumer: &str, dep: &str) -> DepEdge {
-        DepEdge {
-            consumer: consumer.to_owned(),
-            dep: dep.to_owned(),
-        }
-    }
-
-    fn exc(consumer: &str, dep: &str) -> Exception {
+    fn exc(consumer: &str, dep: &str, axis: Axis) -> Exception {
         Exception {
             consumer: consumer.to_owned(),
             dep: dep.to_owned(),
+            axis,
             ticket: "TICK-1".to_owned(),
             reason: "legacy".to_owned(),
         }
     }
 
+    fn key(v: &(String, String)) -> (String, String) {
+        v.clone()
+    }
+
     #[test]
-    fn clean_workspace_reports_nothing() {
-        let packages: Vec<WorkspacePackage> = vec![pkg("d", Role::Domain), pkg("u", Role::Usecase)];
-        let edges: Vec<DepEdge> = vec![edge("u", "d")];
-        let report: LintReport = run(&packages, &edges, &[]);
+    fn no_violations_and_no_exceptions_is_empty() {
+        let report: AxisReport<(String, String)> = reconcile(Vec::new(), &[], key);
         assert!(report.violations.is_empty());
         assert!(report.unsanctioned.is_empty());
         assert!(report.stale_exceptions.is_empty());
     }
 
     #[test]
-    fn matrix_violation_is_unsanctioned_without_exception() {
-        let packages: Vec<WorkspacePackage> =
-            vec![pkg("d", Role::Domain), pkg("infra", Role::Infra)];
-        // Domain depending on Infra is forbidden.
-        let edges: Vec<DepEdge> = vec![edge("d", "infra")];
-        let report: LintReport = run(&packages, &edges, &[]);
+    fn violation_without_exception_is_unsanctioned() {
+        let violations: Vec<(String, String)> = vec![("a".to_owned(), "b".to_owned())];
+        let report: AxisReport<(String, String)> = reconcile(violations, &[], key);
         assert_eq!(report.violations.len(), 1);
         assert_eq!(report.unsanctioned.len(), 1);
-        assert_eq!(report.stale_exceptions.len(), 0);
-        let v: &Violation = &report.unsanctioned[0];
-        assert_eq!(v.consumer, "d");
-        assert_eq!(v.consumer_role, Role::Domain);
-        assert_eq!(v.dep, "infra");
-        assert_eq!(v.dep_role, Role::Infra);
+        assert!(report.stale_exceptions.is_empty());
     }
 
     #[test]
-    fn exception_sanctions_violation() {
-        let packages: Vec<WorkspacePackage> =
-            vec![pkg("d", Role::Domain), pkg("infra", Role::Infra)];
-        let edges: Vec<DepEdge> = vec![edge("d", "infra")];
-        let exceptions: Vec<Exception> = vec![exc("d", "infra")];
-        let report: LintReport = run(&packages, &edges, &exceptions);
+    fn matching_exception_sanctions_and_leaves_no_stale() {
+        let violations: Vec<(String, String)> = vec![("a".to_owned(), "b".to_owned())];
+        let e: Exception = exc("a", "b", Axis::Role);
+        let exceptions: Vec<&Exception> = vec![&e];
+        let report: AxisReport<(String, String)> = reconcile(violations, &exceptions, key);
         assert_eq!(report.violations.len(), 1);
         assert!(report.unsanctioned.is_empty());
         assert!(report.stale_exceptions.is_empty());
     }
 
     #[test]
-    fn stale_exception_reported() {
-        let packages: Vec<WorkspacePackage> = vec![pkg("d", Role::Domain), pkg("u", Role::Usecase)];
-        let edges: Vec<DepEdge> = vec![edge("u", "d")]; // legal edge
-        let exceptions: Vec<Exception> = vec![exc("u", "d")]; // sanctions a non-violation
-        let report: LintReport = run(&packages, &edges, &exceptions);
+    fn exception_matching_no_violation_is_stale() {
+        let e: Exception = exc("a", "b", Axis::Role);
+        let exceptions: Vec<&Exception> = vec![&e];
+        let report: AxisReport<(String, String)> = reconcile(Vec::new(), &exceptions, key);
         assert!(report.violations.is_empty());
         assert!(report.unsanctioned.is_empty());
         assert_eq!(report.stale_exceptions.len(), 1);
@@ -191,24 +156,17 @@ mod tests {
     }
 
     #[test]
-    fn legal_edges_ignored() {
-        // composition-root may depend on anything.
-        let packages: Vec<WorkspacePackage> = vec![
-            pkg("root", Role::CompositionRoot),
-            pkg("d", Role::Domain),
-            pkg("u", Role::Usecase),
-            pkg("infra", Role::Infra),
+    fn many_violations_split_by_exception_coverage() {
+        let violations: Vec<(String, String)> = vec![
+            ("a".to_owned(), "b".to_owned()),
+            ("c".to_owned(), "d".to_owned()),
         ];
-        let edges: Vec<DepEdge> = vec![edge("root", "d"), edge("root", "u"), edge("root", "infra")];
-        let report: LintReport = run(&packages, &edges, &[]);
-        assert!(report.violations.is_empty());
-    }
-
-    #[test]
-    fn edges_with_unknown_endpoints_are_ignored() {
-        let packages: Vec<WorkspacePackage> = vec![pkg("d", Role::Domain)];
-        let edges: Vec<DepEdge> = vec![edge("d", "external_crate"), edge("external_crate", "d")];
-        let report: LintReport = run(&packages, &edges, &[]);
-        assert!(report.violations.is_empty());
+        let e: Exception = exc("a", "b", Axis::Role);
+        let exceptions: Vec<&Exception> = vec![&e];
+        let report: AxisReport<(String, String)> = reconcile(violations, &exceptions, key);
+        assert_eq!(report.violations.len(), 2);
+        assert_eq!(report.unsanctioned.len(), 1);
+        assert_eq!(report.unsanctioned[0], ("c".to_owned(), "d".to_owned()));
+        assert!(report.stale_exceptions.is_empty());
     }
 }

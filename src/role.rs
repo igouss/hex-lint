@@ -2,21 +2,7 @@
 //!
 //! Pure: no framework, no IO, no allocation beyond `&'static str`.
 
-/// Actionable recovery guidance for a forbidden edge out of a crate with a
-/// given role. The diagnostic alone ("X may not depend on Y") says *what*
-/// broke; this says *how* to fix the architecture so a human — or an agent
-/// under a "make the build pass" objective — recovers instead of thrashing.
-///
-/// Keyed on the consumer's role: the constraint a role lives under, and the
-/// escape hatches, are the same regardless of which forbidden role it reached
-/// for (the dependency's role is already shown in the diagnostic line).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Remediation {
-    /// One-sentence statement of the constraint this role lives under.
-    pub rule: &'static str,
-    /// Concrete fix options, each a complete imperative sentence.
-    pub fixes: &'static [&'static str],
-}
+use crate::remediation::Remediation;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Role {

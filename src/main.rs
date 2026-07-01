@@ -17,7 +17,9 @@
 
 mod exceptions;
 mod lint;
+mod remediation;
 mod role;
+mod role_check;
 mod workspace;
 
 use std::env;
@@ -27,7 +29,8 @@ use std::process::ExitCode;
 use serde::Serialize;
 
 use crate::lint::Exception;
-use crate::role::{Remediation, Role};
+use crate::remediation::Remediation;
+use crate::role::Role;
 
 const DEFAULT_EXCEPTIONS_FILENAME: &str = "hex-lint-exceptions.toml";
 
@@ -267,7 +270,8 @@ fn main() -> ExitCode {
         }
     };
 
-    let report: lint::LintReport = lint::run(&ws.packages, &ws.edges, &exceptions);
+    let report: lint::AxisReport<role_check::RoleViolation> =
+        role_check::run(&ws.packages, &ws.edges, &exceptions);
     let had_problem: bool = !report.unsanctioned.is_empty() || !report.stale_exceptions.is_empty();
 
     match args.format {
@@ -284,7 +288,7 @@ fn main() -> ExitCode {
 
 fn render_text(
     packages: &[lint::WorkspacePackage],
-    report: &lint::LintReport,
+    report: &lint::AxisReport<role_check::RoleViolation>,
     exceptions: &[Exception],
     had_problem: bool,
 ) {
@@ -333,7 +337,7 @@ fn render_text(
 
 fn render_json(
     packages: &[lint::WorkspacePackage],
-    report: &lint::LintReport,
+    report: &lint::AxisReport<role_check::RoleViolation>,
     exceptions: &[Exception],
     had_problem: bool,
 ) {
