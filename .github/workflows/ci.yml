@@ -32,5 +32,8 @@ jobs:
       - name: cargo build
         run: cargo build --release --locked
 
+      - name: cargo test
+        run: cargo test --locked
+
       - name: self-lint (run hex-lint against this workspace)
         run: cargo run --release --locked
