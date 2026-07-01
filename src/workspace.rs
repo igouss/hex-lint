@@ -40,12 +40,24 @@ struct HexArchMeta {
 #[derive(Deserialize)]
 struct HexArch {
     role: String,
+    /// The member's declared bounded context, if any. Optional at intake: a
+    /// crate that omits it is simply not part of the context axis yet. Read
+    /// verbatim, unvalidated — the adoption/partial rule and the reserved
+    /// `shared` name live in the context domain, not in this adapter.
+    #[serde(default)]
+    context: Option<String>,
 }
 
-fn extract_role(pkg: &Package) -> Result<Role, String> {
+/// Parse one member's `[package.metadata.hex-arch]` intake table: the validated
+/// role and the optional, unvalidated bounded-context tag. Policy-free on
+/// context — carrying the tag is all this adapter does; the context domain
+/// decides what it means.
+fn extract_hex_arch(pkg: &Package) -> Result<(Role, Option<String>), String> {
     let meta: HexArchMeta = serde_json::from_value(pkg.metadata.clone())
         .map_err(|_| "missing package.metadata.hex-arch.role".to_owned())?;
-    Role::parse(&meta.hex_arch.role).ok_or_else(|| format!("unknown role `{}`", meta.hex_arch.role))
+    let role: Role = Role::parse(&meta.hex_arch.role)
+        .ok_or_else(|| format!("unknown role `{}`", meta.hex_arch.role))?;
+    Ok((role, meta.hex_arch.context))
 }
 
 pub fn load(manifest_path: Option<&Path>) -> Result<Workspace, LoadError> {
@@ -66,12 +78,11 @@ pub fn load(manifest_path: Option<&Path>) -> Result<Workspace, LoadError> {
             continue;
         }
         name_by_id.insert(&pkg.id, pkg.name.as_str());
-        match extract_role(pkg) {
-            Ok(role) => packages.push(WorkspacePackage {
+        match extract_hex_arch(pkg) {
+            Ok((role, context)) => packages.push(WorkspacePackage {
                 name: pkg.name.to_string(),
                 role,
-                // Placeholder: real context extraction lands in the next bead.
-                context: None,
+                context,
             }),
             Err(why) => bad_roles.push((pkg.name.to_string(), why)),
         }
@@ -111,4 +122,38 @@ pub fn load(manifest_path: Option<&Path>) -> Result<Workspace, LoadError> {
         packages,
         edges,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HexArch, HexArchMeta};
+    use serde_json::{json, Value};
+
+    /// Deserialize a `[package.metadata]` blob the way `cargo metadata` hands it
+    /// to us, returning just the `hex-arch` table.
+    fn parse(metadata: Value) -> HexArch {
+        let meta: HexArchMeta =
+            serde_json::from_value(metadata).expect("well-formed hex-arch metadata");
+        meta.hex_arch
+    }
+
+    #[test]
+    fn context_absent_deserializes_to_none() {
+        let hex_arch: HexArch = parse(json!({ "hex-arch": { "role": "domain" } }));
+        assert_eq!(hex_arch.context, None);
+    }
+
+    #[test]
+    fn context_present_is_carried_verbatim() {
+        let hex_arch: HexArch =
+            parse(json!({ "hex-arch": { "role": "domain", "context": "shopping" } }));
+        assert_eq!(hex_arch.context, Some("shopping".to_owned()));
+    }
+
+    #[test]
+    fn reserved_shared_context_is_read_without_interpretation() {
+        let hex_arch: HexArch =
+            parse(json!({ "hex-arch": { "role": "port-and-adapter", "context": "shared" } }));
+        assert_eq!(hex_arch.context, Some("shared".to_owned()));
+    }
 }
