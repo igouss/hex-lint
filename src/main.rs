@@ -95,35 +95,63 @@ impl Format {
 }
 
 fn print_help() {
-    println!("hex-lint {}", env!("CARGO_PKG_VERSION"));
-    println!("Enforce hexagonal-architecture role boundaries across a Cargo workspace.");
-    println!();
-    println!("USAGE:");
-    println!("    hex-lint [OPTIONS]");
-    println!("    hex-lint explain <ROLE>   Print a role's contract and how to fix violations.");
-    println!();
-    println!("OPTIONS:");
-    println!(
-        "    -e, --exceptions <PATH>   Exceptions TOML. Default: <workspace-root>/{DEFAULT_EXCEPTIONS_FILENAME}"
-    );
-    println!("        --manifest-path <PATH>  Path to a Cargo.toml in the workspace.");
-    println!("    -f, --format <FMT>        Output format: text (default) or json.");
-    println!("    -h, --help                Print this help.");
-    println!("    -V, --version             Print version.");
-    println!();
-    println!("ROLES:");
-    println!("    domain, usecase, port-and-adapter, driven-adapter,");
-    println!("    driving-adapter, infra, composition-root");
-    println!();
-    println!("Tag each workspace package's Cargo.toml:");
-    println!("    [package.metadata.hex-arch]");
-    println!("    role = \"domain\"");
-    println!();
-    println!("SCOPE:");
-    println!("    Roles are enforced at CRATE granularity. Each workspace member gets one");
-    println!("    role and the crate dependency graph is checked against the matrix. Mixing");
-    println!("    roles inside a single crate is NOT enforced — split it into one crate per");
-    println!("    role if you want the boundary checked.");
+    print!("{}", help_text());
+}
+
+/// The `--help` text. Pure (returns the string rather than printing it) so a
+/// test can assert it keeps documenting every axis the tool actually enforces —
+/// the context axis silently outran this text once, and a regression test is
+/// cheaper than noticing again.
+fn help_text() -> String {
+    format!(
+        "hex-lint {version}
+Enforce hexagonal-architecture role boundaries — and optional bounded-context
+isolation — across a Cargo workspace.
+
+USAGE:
+    hex-lint [OPTIONS]
+    hex-lint explain <ROLE>   Print a role's contract and how to fix violations.
+
+OPTIONS:
+    -e, --exceptions <PATH>   Exceptions TOML. Default: <workspace-root>/{DEFAULT_EXCEPTIONS_FILENAME}
+        --manifest-path <PATH>  Path to a Cargo.toml in the workspace.
+    -f, --format <FMT>        Output format: text (default) or json.
+    -h, --help                Print this help.
+    -V, --version             Print version.
+
+ROLES:
+    domain, usecase, port-and-adapter, driven-adapter,
+    driving-adapter, infra, composition-root
+
+Tag each workspace package's Cargo.toml:
+    [package.metadata.hex-arch]
+    role = \"domain\"
+    context = \"shopping\"   # optional; see CONTEXT ISOLATION
+
+ROLE AXIS:
+    Roles are enforced at CRATE granularity. Each workspace member gets one
+    role and the crate dependency graph is checked against the matrix. Mixing
+    roles inside a single crate is NOT enforced — split it into one crate per
+    role if you want the boundary checked.
+
+CONTEXT ISOLATION (optional, orthogonal to roles):
+    Give each crate a `context` and hex-lint also enforces bounded-context
+    isolation over the same edges: `consumer -> dep` passes iff
+    consumer.context == dep.context OR dep.context == \"shared\". \"shared\" is
+    the one reserved name — any crate may depend on it; it may depend only on
+    itself. Every other name is free-form.
+
+    Opt-in and all-or-nothing: zero contexts = axis off (roles only); a context
+    on every member = axis on; a context on only SOME members is a hard error
+    (partial adoption) that exits non-zero before any check runs.
+
+EXCEPTIONS:
+    Grandfathered debt lives in the exceptions TOML, one entry per edge, tagged
+    axis = \"role\" (default) or axis = \"context\". A stale entry that matches no
+    real violation fails the lint on its own axis.
+",
+        version = env!("CARGO_PKG_VERSION"),
+    )
 }
 
 fn print_explain(role: Role) {
@@ -844,5 +872,43 @@ mod tests {
     #[test]
     fn explain_missing_role_is_an_error() {
         assert!(parse_args(args(&["explain"])).is_err());
+    }
+
+    #[test]
+    fn help_documents_every_enforced_axis() {
+        // Guards the exact drift that prompted this: `main` enforces both the
+        // role matrix and context isolation, so `--help` must document both.
+        let help: String = super::help_text();
+
+        // Role axis.
+        assert!(help.contains("ROLES:"), "help must list the roles");
+        assert!(
+            help.contains("role = \"domain\""),
+            "help must show the role tag"
+        );
+
+        // Context axis — the part that was missing.
+        assert!(
+            help.contains("CONTEXT ISOLATION"),
+            "help must document the context axis"
+        );
+        assert!(
+            help.contains("context = "),
+            "help must show the context tag"
+        );
+        assert!(
+            help.contains("\"shared\""),
+            "help must name the reserved shared context"
+        );
+        assert!(
+            help.contains("partial adoption"),
+            "help must state the all-or-nothing adoption rule"
+        );
+
+        // Exceptions cover both axes.
+        assert!(
+            help.contains("axis = \"context\""),
+            "help must show the context exception axis key"
+        );
     }
 }
