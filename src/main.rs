@@ -587,15 +587,7 @@ fn render_json(
     }
 }
 
-const ALL_ROLES: &[Role] = &[
-    Role::Domain,
-    Role::Usecase,
-    Role::PortAndAdapter,
-    Role::DrivenAdapter,
-    Role::DrivingAdapter,
-    Role::Infra,
-    Role::CompositionRoot,
-];
+const ALL_ROLES: &[Role] = Role::ALL;
 
 #[derive(Serialize)]
 struct JsonReport<'a> {

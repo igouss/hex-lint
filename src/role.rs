@@ -16,6 +16,19 @@ pub enum Role {
 }
 
 impl Role {
+    /// Every role, in outward order. The single enumeration: the JSON matrix,
+    /// `explain`'s role listing, and the matrix property tests all read this,
+    /// so a role added to the enum cannot be silently missing from any of them.
+    pub const ALL: &'static [Self] = &[
+        Self::Domain,
+        Self::Usecase,
+        Self::PortAndAdapter,
+        Self::DrivenAdapter,
+        Self::DrivingAdapter,
+        Self::Infra,
+        Self::CompositionRoot,
+    ];
+
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s {
             "domain" => Self::Domain,
@@ -126,15 +139,51 @@ impl Role {
 mod tests {
     use super::Role;
 
-    const ALL: &[Role] = &[
-        Role::Domain,
-        Role::Usecase,
-        Role::PortAndAdapter,
-        Role::DrivenAdapter,
-        Role::DrivingAdapter,
-        Role::Infra,
-        Role::CompositionRoot,
-    ];
+    const ALL: &[Role] = Role::ALL;
+
+    #[test]
+    fn all_lists_every_variant() {
+        // Adding a variant makes this match non-exhaustive and the test stops
+        // compiling, so extending `Role::ALL` is enforced rather than hoped for.
+        const fn tag(r: Role) -> usize {
+            match r {
+                Role::Domain => 0,
+                Role::Usecase => 1,
+                Role::PortAndAdapter => 2,
+                Role::DrivenAdapter => 3,
+                Role::DrivingAdapter => 4,
+                Role::Infra => 5,
+                Role::CompositionRoot => 6,
+            }
+        }
+        assert_eq!(Role::ALL.len(), tag(Role::CompositionRoot) + 1);
+    }
+
+    #[test]
+    fn matrix_is_transitively_closed() {
+        // The theorem the whole gate rests on: if every *direct* edge in a
+        // workspace is legal, every *transitive* edge is legal too. Formally,
+        // for every role R and every A in allowed(R), allowed(A) is a subset
+        // of allowed(R) — so a dep closure can never reach a role the direct
+        // matrix forbids. A separate transitive walk is therefore redundant,
+        // and any second implementation of it is drift waiting to happen.
+        //
+        // Note the one escape hatch: a sanctioned exception deliberately
+        // admits an illegal direct edge, and consumers of that crate inherit
+        // the hole. Closure is a property of the matrix, not of a workspace
+        // that has overridden it.
+        for &consumer in Role::ALL {
+            for &direct in consumer.allowed_deps() {
+                for &indirect in direct.allowed_deps() {
+                    assert!(
+                        consumer.allowed_deps().contains(&indirect),
+                        "closure broken: {consumer:?} -> {direct:?} -> {indirect:?}, \
+                         but {consumer:?} may not depend on {indirect:?} directly"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn parse_round_trip() {
