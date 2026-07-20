@@ -18,7 +18,7 @@ In every workspace member's `Cargo.toml`:
 
 ```toml
 [package.metadata.hex-arch]
-role = "domain"   # or usecase, port-and-adapter, driven-adapter,
+role = "domain"   # or kernel, usecase, port-and-adapter, driven-adapter,
                   # driving-adapter, infra, composition-root
 ```
 
@@ -44,16 +44,18 @@ Each row says: *a crate of this role may depend on crates of these roles, and no
 
 | Consumer            | May depend on |
 | ------------------- | ------------- |
-| `domain`            | `domain` |
-| `usecase`           | `domain`, `usecase`, `port-and-adapter` |
-| `port-and-adapter`  | `domain`, `port-and-adapter` |
-| `driven-adapter`    | `domain`, `port-and-adapter`, `infra` |
-| `driving-adapter`   | `domain`, `usecase`, `port-and-adapter` |
+| `kernel`            | `kernel` |
+| `domain`            | `kernel`, `domain` |
+| `usecase`           | `kernel`, `domain`, `usecase`, `port-and-adapter` |
+| `port-and-adapter`  | `kernel`, `domain`, `port-and-adapter` |
+| `driven-adapter`    | `kernel`, `domain`, `port-and-adapter`, `infra` |
+| `driving-adapter`   | `kernel`, `domain`, `usecase`, `port-and-adapter` |
 | `infra`             | `infra` |
 | `composition-root`  | everything (this is where wiring lives) |
 
 The point of the matrix:
 
+- **`kernel`** is the floor: the shared vocabulary every layer above speaks — the traits and types that would otherwise be duplicated into each domain crate. It may not depend on `domain`, which is what separates it from "a domain crate everyone happens to import". Optional; most workspaces never need one.
 - **`domain`** is the pure heart. No outward dependencies. No frameworks, no I/O, no async runtimes. Just types and rules.
 - **`usecase`** orchestrates application behavior. Talks to the outside world only through `port-and-adapter` traits.
 - **`port-and-adapter`** holds the trait definitions (the *ports*) and the domain types they speak in.
@@ -63,6 +65,14 @@ The point of the matrix:
 - **`composition-root`** is the binary or top-level crate that wires concrete adapters into usecases. The only place the full graph is allowed.
 
 If your code doesn't fit, your code is wrong, or your matrix is wrong. Pick one.
+
+### Direct edges are enough
+
+`hex-lint` checks only *direct* workspace dependencies, and that is not a shortcut. The matrix is **transitively closed**: for every role R and every role A that R may depend on, everything A may depend on, R may depend on too. So a dependency *closure* can never reach a role the direct matrix forbids — if every direct edge passes, every transitive edge passes for free.
+
+`role::tests::matrix_is_transitively_closed` proves this and fails on any future row that breaks it. If you maintain a separate transitive dep-graph walk alongside `hex-lint`, it is enforcing nothing extra and is free to drift out of agreement — delete it.
+
+The one hole is deliberate: a sanctioned exception admits an illegal *direct* edge, and every consumer of that crate inherits it transitively. Closure is a property of the matrix, not of a workspace that has overridden it — which is the real reason stale exceptions fail the lint.
 
 ## Scope: crate granularity
 

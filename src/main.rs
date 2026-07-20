@@ -103,6 +103,11 @@ fn print_help() {
 /// the context axis silently outran this text once, and a regression test is
 /// cheaper than noticing again.
 fn help_text() -> String {
+    let roles: String = Role::ALL
+        .iter()
+        .map(|r: &Role| r.as_str())
+        .collect::<Vec<&'static str>>()
+        .join(", ");
     format!(
         "hex-lint {version}
 Enforce hexagonal-architecture role boundaries — and optional bounded-context
@@ -119,9 +124,8 @@ OPTIONS:
     -h, --help                Print this help.
     -V, --version             Print version.
 
-ROLES:
-    domain, usecase, port-and-adapter, driven-adapter,
-    driving-adapter, infra, composition-root
+ROLES (innermost first):
+    {roles}
 
 Tag each workspace package's Cargo.toml:
     [package.metadata.hex-arch]
@@ -873,7 +877,16 @@ mod tests {
         let help: String = super::help_text();
 
         // Role axis.
-        assert!(help.contains("ROLES:"), "help must list the roles");
+        assert!(help.contains("ROLES"), "help must list the roles");
+        // Rendered from `Role::ALL`, so a new role can never be silently
+        // absent from the help the way `kernel` would have been.
+        for role in Role::ALL {
+            assert!(
+                help.contains(role.as_str()),
+                "help must name the `{}` role",
+                role.as_str()
+            );
+        }
         assert!(
             help.contains("role = \"domain\""),
             "help must show the role tag"

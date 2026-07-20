@@ -6,6 +6,7 @@ use crate::remediation::Remediation;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Role {
+    Kernel,
     Domain,
     Usecase,
     PortAndAdapter,
@@ -20,6 +21,7 @@ impl Role {
     /// `explain`'s role listing, and the matrix property tests all read this,
     /// so a role added to the enum cannot be silently missing from any of them.
     pub const ALL: &'static [Self] = &[
+        Self::Kernel,
         Self::Domain,
         Self::Usecase,
         Self::PortAndAdapter,
@@ -31,6 +33,7 @@ impl Role {
 
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s {
+            "kernel" => Self::Kernel,
             "domain" => Self::Domain,
             "usecase" => Self::Usecase,
             "port-and-adapter" => Self::PortAndAdapter,
@@ -44,6 +47,7 @@ impl Role {
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Kernel => "kernel",
             Self::Domain => "domain",
             Self::Usecase => "usecase",
             Self::PortAndAdapter => "port-and-adapter",
@@ -57,16 +61,19 @@ impl Role {
     /// Roles a consumer with `self` may legally depend on. Strict hex matrix.
     pub fn allowed_deps(self) -> &'static [Self] {
         use Role::{
-            CompositionRoot, Domain, DrivenAdapter, DrivingAdapter, Infra, PortAndAdapter, Usecase,
+            CompositionRoot, Domain, DrivenAdapter, DrivingAdapter, Infra, Kernel, PortAndAdapter,
+            Usecase,
         };
         match self {
-            Domain => &[Domain],
-            Usecase => &[Domain, Usecase, PortAndAdapter],
-            PortAndAdapter => &[Domain, PortAndAdapter],
-            DrivenAdapter => &[Domain, PortAndAdapter, Infra],
-            DrivingAdapter => &[Domain, Usecase, PortAndAdapter],
+            Kernel => &[Kernel],
+            Domain => &[Kernel, Domain],
+            Usecase => &[Kernel, Domain, Usecase, PortAndAdapter],
+            PortAndAdapter => &[Kernel, Domain, PortAndAdapter],
+            DrivenAdapter => &[Kernel, Domain, PortAndAdapter, Infra],
+            DrivingAdapter => &[Kernel, Domain, Usecase, PortAndAdapter],
             Infra => &[Infra],
             CompositionRoot => &[
+                Kernel,
                 Domain,
                 Usecase,
                 PortAndAdapter,
@@ -83,6 +90,13 @@ impl Role {
     /// actually produce a violation, but the function still answers).
     pub fn remediation(self) -> Remediation {
         match self {
+            Self::Kernel => Remediation {
+                rule: "kernel is the floor of the system: the shared vocabulary every other layer speaks, so it may depend on nothing but other kernel crates — not even domain.",
+                fixes: &[
+                    "If this crate needs a domain type, the dependency is upside down: the kernel cannot know its consumers. Move the shared type down into the kernel, or retag this crate `domain`.",
+                    "If you need behavior rather than vocabulary, declare it as a port (trait) here and let a layer above implement it — the kernel names the abstraction, never the implementation.",
+                ],
+            },
             Self::Domain => Remediation {
                 rule: "domain is the pure heart of the system: it may depend on nothing but other domain crates — no frameworks, no I/O, no adapters.",
                 fixes: &[
@@ -147,13 +161,14 @@ mod tests {
         // compiling, so extending `Role::ALL` is enforced rather than hoped for.
         const fn tag(r: Role) -> usize {
             match r {
-                Role::Domain => 0,
-                Role::Usecase => 1,
-                Role::PortAndAdapter => 2,
-                Role::DrivenAdapter => 3,
-                Role::DrivingAdapter => 4,
-                Role::Infra => 5,
-                Role::CompositionRoot => 6,
+                Role::Kernel => 0,
+                Role::Domain => 1,
+                Role::Usecase => 2,
+                Role::PortAndAdapter => 3,
+                Role::DrivenAdapter => 4,
+                Role::DrivingAdapter => 5,
+                Role::Infra => 6,
+                Role::CompositionRoot => 7,
             }
         }
         assert_eq!(Role::ALL.len(), tag(Role::CompositionRoot) + 1);
@@ -204,8 +219,35 @@ mod tests {
     }
 
     #[test]
-    fn domain_only_depends_on_domain() {
-        assert_eq!(Role::Domain.allowed_deps(), &[Role::Domain]);
+    fn domain_depends_only_on_domain_and_kernel() {
+        assert_eq!(Role::Domain.allowed_deps(), &[Role::Kernel, Role::Domain]);
+    }
+
+    #[test]
+    fn kernel_is_the_floor() {
+        // The kernel is the shared vocabulary everything else speaks, so it
+        // must not be able to name a consumer — not even domain.
+        assert_eq!(Role::Kernel.allowed_deps(), &[Role::Kernel]);
+    }
+
+    #[test]
+    fn every_role_that_may_name_domain_may_also_name_the_kernel() {
+        // If a layer can speak domain, it can speak the vocabulary domain is
+        // written in; otherwise it could receive a kernel type it may not
+        // mention. Infra satisfies this vacuously: it knows neither. The
+        // kernel itself is the one role outside the rule — it is the floor,
+        // so it names itself and nothing above it.
+        for &r in ALL {
+            if r == Role::Kernel {
+                continue;
+            }
+            let allowed: &[Role] = r.allowed_deps();
+            assert_eq!(
+                allowed.contains(&Role::Domain),
+                allowed.contains(&Role::Kernel),
+                "{r:?} must allow domain and kernel together, or neither"
+            );
+        }
     }
 
     #[test]
