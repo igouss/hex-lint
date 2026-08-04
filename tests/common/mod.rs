@@ -29,3 +29,19 @@ pub fn run(fixture: &str, extra: &[&str]) -> Output {
         .output()
         .expect("spawn hex-lint binary")
 }
+
+/// Run the compiled `hex-lint` with NO `--manifest-path`, from a working
+/// directory that is not a Cargo workspace. The contract-reading modes must
+/// answer from here — an agent asking "what are the rules?" has not necessarily
+/// got a loadable workspace yet, and may not have written one.
+#[allow(
+    dead_code,
+    reason = "used by capabilities.rs, not by every test binary"
+)]
+pub fn run_outside_a_workspace(extra: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_hex-lint"))
+        .current_dir(std::env::temp_dir())
+        .args(extra)
+        .output()
+        .expect("spawn hex-lint binary")
+}

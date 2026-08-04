@@ -15,6 +15,7 @@
 #![allow(clippy::print_stderr, reason = "this IS a CLI tool")]
 #![allow(clippy::print_stdout, reason = "this IS a CLI tool")]
 
+mod capabilities;
 mod context;
 mod context_check;
 mod exceptions;
@@ -22,6 +23,7 @@ mod lint;
 mod remediation;
 mod role;
 mod role_check;
+mod rule;
 mod workspace;
 
 use std::env;
@@ -33,6 +35,7 @@ use serde::Serialize;
 use crate::lint::{Axis, Exception};
 use crate::remediation::Remediation;
 use crate::role::Role;
+use crate::rule::Rule;
 
 const DEFAULT_EXCEPTIONS_FILENAME: &str = "hex-lint-exceptions.toml";
 
@@ -52,6 +55,7 @@ struct Args {
 enum ParseOutcome {
     Run(Args),
     Explain(Role),
+    CapabilitiesRequested,
     HelpRequested,
     VersionRequested,
 }
@@ -121,6 +125,10 @@ OPTIONS:
     -e, --exceptions <PATH>   Exceptions TOML. Default: <workspace-root>/{DEFAULT_EXCEPTIONS_FILENAME}
         --manifest-path <PATH>  Path to a Cargo.toml in the workspace.
     -f, --format <FMT>        Output format: text (default) or json.
+        --capabilities        Print the machine-readable contract as JSON, then
+                              exit 0. Needs no workspace — read the role matrix,
+                              the context predicate and the exceptions schema
+                              BEFORE writing code, not after failing on it.
     -h, --help                Print this help.
     -V, --version             Print version.
 
@@ -188,6 +196,7 @@ fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<ParseOutcome, S
         match arg.as_str() {
             "-h" | "--help" => return Ok(ParseOutcome::HelpRequested),
             "-V" | "--version" => return Ok(ParseOutcome::VersionRequested),
+            "--capabilities" => return Ok(ParseOutcome::CapabilitiesRequested),
             "explain" => {
                 let v: String = it
                     .next()
@@ -241,6 +250,13 @@ fn main() -> ExitCode {
         Ok(ParseOutcome::Run(a)) => a,
         Ok(ParseOutcome::Explain(role)) => {
             print_explain(role);
+            return ExitCode::SUCCESS;
+        }
+        // Answered before any workspace is loaded, on purpose: the contract is
+        // a property of the tool, not of a repo, so an agent can read it from
+        // anywhere — including before the workspace it is about to write exists.
+        Ok(ParseOutcome::CapabilitiesRequested) => {
+            println!("{}", capabilities::render(env!("CARGO_PKG_VERSION")));
             return ExitCode::SUCCESS;
         }
         Ok(ParseOutcome::HelpRequested) => {
@@ -544,29 +560,32 @@ fn render_json(
         })
         .collect();
 
-    let rules: Vec<JsonRule<'_>> = vec![
-        JsonRule {
-            id: "role-matrix",
-            description:
-                "Every workspace-internal dep edge respects the hex-arch role matrix (or is sanctioned by hex-lint-exceptions.toml).",
-            status: if role_report.unsanctioned.is_empty() { "pass" } else { "fail" },
-            failure_count: role_report.unsanctioned.len(),
-        },
-        JsonRule {
-            id: "exceptions-honest",
-            description:
-                "Every entry in hex-lint-exceptions.toml corresponds to a real, current violation (no stale debt).",
-            status: if role_report.stale_exceptions.is_empty() { "pass" } else { "fail" },
-            failure_count: role_report.stale_exceptions.len(),
-        },
-        JsonRule {
-            id: "context-isolation",
-            description:
-                "Every workspace-internal dep edge respects bounded-context isolation (same context, or the dependency is shared; or is sanctioned by hex-lint-exceptions.toml).",
-            status: if context_report.unsanctioned.is_empty() { "pass" } else { "fail" },
-            failure_count: context_report.unsanctioned.len(),
-        },
-    ];
+    // Ids and descriptions come from `Rule`, the same enumeration
+    // `--capabilities` publishes, so the contract an agent read and the report
+    // it gets back cannot disagree. Only the per-run counts live here.
+    //
+    // `exceptions-honest` spans BOTH axes: a stale context exception fails the
+    // build via `had_problem`, so leaving it out of the count let `rules` report
+    // all-pass beside `"status": "fail"` — a contradiction on the surface an
+    // agent parses.
+    let rules: Vec<JsonRule<'_>> = Rule::ALL
+        .iter()
+        .map(|&r: &Rule| {
+            let failure_count: usize = match r {
+                Rule::RoleMatrix => role_report.unsanctioned.len(),
+                Rule::ExceptionsHonest => {
+                    role_report.stale_exceptions.len() + context_report.stale_exceptions.len()
+                }
+                Rule::ContextIsolation => context_report.unsanctioned.len(),
+            };
+            JsonRule {
+                id: r.id(),
+                description: r.description(),
+                status: if failure_count == 0 { "pass" } else { "fail" },
+                failure_count,
+            }
+        })
+        .collect();
 
     let out: JsonReport<'_> = JsonReport {
         version: 1,
