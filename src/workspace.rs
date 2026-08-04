@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use cargo_metadata::{DependencyKind, MetadataCommand, Package};
+use cargo_metadata::{CargoOpt, DependencyKind, MetadataCommand, Package};
 use serde::Deserialize;
 
 use crate::lint::{DepEdge, WorkspacePackage};
@@ -62,6 +62,15 @@ fn extract_hex_arch(pkg: &Package) -> Result<(Role, Option<String>), String> {
 
 pub fn load(manifest_path: Option<&Path>) -> Result<Workspace, LoadError> {
     let mut cmd: MetadataCommand = MetadataCommand::new();
+    // Resolve with every feature on. `cargo metadata` resolves the feature
+    // graph, so with default features an optional dependency that no default
+    // feature activates is absent from `resolve.nodes` entirely — the lint
+    // would call the workspace clean while the forbidden edge exists. A lint
+    // must see every edge that *can* exist, not the subset one feature
+    // selection happens to activate. Resolution never compiles, so features
+    // that are mutually exclusive at build time are safe to enable together
+    // here.
+    cmd.features(CargoOpt::AllFeatures);
     if let Some(p) = manifest_path {
         cmd.manifest_path(p);
     }

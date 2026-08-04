@@ -1,0 +1,15 @@
+[package]
+name = "pure-domain"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata.hex-arch]
+role = "domain"
+
+# Not in `default`, so a default-feature metadata resolve never reports it.
+[features]
+persistence = ["dep:db-adapter"]
+
+[dependencies]
+db-adapter = { path = "../db-adapter", optional = true }

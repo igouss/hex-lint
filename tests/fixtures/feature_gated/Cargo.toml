@@ -1,0 +1,11 @@
+# Acceptance: an optional dependency behind a NON-DEFAULT feature is still a
+# real edge in the dependency graph, so the role axis must see it.
+#
+# `cargo metadata` resolves features, and with default features the optional
+# `db-adapter` edge is simply absent from `resolve.nodes`. A lint that reads
+# that graph reports this workspace clean while the forbidden edge exists —
+# a false green. The loader therefore asks for ALL features; this fixture is
+# what pins that.
+[workspace]
+resolver = "2"
+members = ["pure-domain", "db-adapter"]
