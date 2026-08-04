@@ -114,7 +114,7 @@ fn role_contracts() -> Value {
             let rem: crate::remediation::Remediation = r.remediation();
             json!({
                 "role": r.as_str(),
-                "rule": rem.rule,
+                "rule": r.contract(),
                 "fixes": rem.fixes,
             })
         })
@@ -131,7 +131,7 @@ fn context_axis() -> Value {
         "predicate": "consumer -> dep passes iff consumer.context == dep.context OR dep.context == \"shared\"",
         "predicate_note": "This subsumes \"shared may depend only on shared\": a shared consumer passes only when the dependency is also shared.",
         "orthogonal_to_roles": true,
-        "rule": rem.rule,
+        "rule": rem.rationale,
         "fixes": rem.fixes,
     })
 }
@@ -272,7 +272,7 @@ mod tests {
         assert_eq!(rows.len(), Role::ALL.len());
         for (row, &role) in rows.iter().zip(Role::ALL) {
             assert_eq!(row["role"], role.as_str());
-            assert_eq!(row["rule"], role.remediation().rule);
+            assert_eq!(row["rule"], role.contract());
             assert!(
                 !row["fixes"]
                     .as_array()
@@ -298,7 +298,7 @@ mod tests {
     fn reserved_context_name_is_derived() {
         let d: Value = doc();
         assert_eq!(d["context_axis"]["reserved_context"], context::SHARED);
-        assert_eq!(d["context_axis"]["rule"], context::remediation().rule);
+        assert_eq!(d["context_axis"]["rule"], context::remediation().rationale);
     }
 
     #[test]

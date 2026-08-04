@@ -85,62 +85,92 @@ impl Role {
         }
     }
 
+    /// This role's matrix row, rendered as a comma-separated list.
+    ///
+    /// The single place the allowed set becomes words. Every surface that
+    /// shows a user which roles are permitted — `explain`, the violation
+    /// diagnostic, the JSON report, the published contract — reads this, so
+    /// none of them can disagree with the matrix they are describing.
+    pub fn allowed_clause(self) -> String {
+        let names: Vec<&'static str> = self
+            .allowed_deps()
+            .iter()
+            .map(|r: &Role| r.as_str())
+            .collect();
+        names.join(", ")
+    }
+
+    /// This role's complete contract in one string: the generated allowed set,
+    /// then the hand-written rationale. For callers that want the whole rule as
+    /// a single sentence — the JSON report and the published contract — instead
+    /// of the two-line layout the text output uses.
+    pub fn contract(self) -> String {
+        format!(
+            "may depend on: {} — and nothing else. {}",
+            self.allowed_clause(),
+            self.remediation().rationale
+        )
+    }
+
     /// Recovery guidance for a forbidden dependency *out of* a crate with this
     /// role. Pure static advice; total over every role (composition-root can't
     /// actually produce a violation, but the function still answers).
+    ///
+    /// The rationale says *why*; it never enumerates the allowed set. See
+    /// [`Remediation::rationale`] and [`Role::allowed_clause`].
     pub fn remediation(self) -> Remediation {
         match self {
             Self::Kernel => Remediation {
-                rule: "kernel is the floor of the system: the shared vocabulary every other layer speaks, so it may depend on nothing but other kernel crates — not even domain.",
+                rationale: "kernel is the floor of the system: the shared vocabulary every layer above speaks. It cannot name anything above it — not even domain.",
                 fixes: &[
                     "If this crate needs a domain type, the dependency is upside down: the kernel cannot know its consumers. Move the shared type down into the kernel, or retag this crate `domain`.",
                     "If you need behavior rather than vocabulary, declare it as a port (trait) here and let a layer above implement it — the kernel names the abstraction, never the implementation.",
                 ],
             },
             Self::Domain => Remediation {
-                rule: "domain is the pure heart of the system: it may depend on nothing but other domain crates — no frameworks, no I/O, no adapters.",
+                rationale: "domain is the pure heart of the system: no frameworks, no I/O, no adapters.",
                 fixes: &[
                     "If this crate isn't really pure domain, it's mislabeled — give it the role it actually plays (usecase, infra, or an adapter).",
                     "If domain genuinely needs a behavior from outside, invert it: declare a port (trait) in a port-and-adapter crate and depend on the trait, never the implementation.",
                 ],
             },
             Self::Usecase => Remediation {
-                rule: "a usecase orchestrates application behavior and may reach the outside world only through ports — never an adapter or infra crate directly.",
+                rationale: "a usecase orchestrates application behavior and reaches the outside world only through ports — never an adapter or infra crate directly.",
                 fixes: &[
                     "Declare the capability you need as a port (trait) in a port-and-adapter crate and depend on that; a driven-adapter implements it.",
                     "Let the composition-root inject the concrete implementation — the usecase only ever names the trait.",
                 ],
             },
             Self::PortAndAdapter => Remediation {
-                rule: "a port-and-adapter crate holds trait definitions and the domain types they speak in; it may depend only on domain and other port-and-adapter crates.",
+                rationale: "a port-and-adapter crate holds the trait definitions — the ports — and the plain types they speak in. It cannot reach up into a usecase, an adapter, or infra.",
                 fixes: &[
                     "If you're reaching for a usecase or an adapter, this crate is mis-scoped — split the offending code out into the layer that owns it.",
                     "If the type you need is a plain data type, it belongs in domain — move it there and depend on domain.",
                 ],
             },
             Self::DrivenAdapter => Remediation {
-                rule: "a driven-adapter implements a port against real infrastructure; it may depend on domain, port-and-adapter, and infra — never up into usecases or sideways into other adapters.",
+                rationale: "a driven-adapter implements a port against real infrastructure. It cannot reach up into a usecase, and it cannot reach sideways into another adapter: adapters are leaves.",
                 fixes: &[
                     "If two adapters need to share code, extract it into an infra crate they both depend on.",
                     "If this is genuine wiring between collaborators, it belongs in the composition-root, not inside the adapter.",
                 ],
             },
             Self::DrivingAdapter => Remediation {
-                rule: "a driving-adapter turns external input into a usecase call; it may depend on domain, usecase, and port-and-adapter — never on driven adapters or infra directly.",
+                rationale: "a driving-adapter turns external input into a usecase call. It cannot depend on a driven-adapter or on infra directly.",
                 fixes: &[
                     "Whatever infra or driven-adapter you're reaching for should be injected by the composition-root, already wired.",
                     "If you're tempted to instantiate an adapter here, that construction belongs in the composition-root.",
                 ],
             },
             Self::Infra => Remediation {
-                rule: "infra is framework, runtime, and glue with zero domain knowledge; it may depend only on other infra crates.",
+                rationale: "infra is framework, runtime, and glue with zero domain knowledge.",
                 fixes: &[
                     "If this crate needs a domain or adapter type, it isn't infra — retag it for the layer it actually serves.",
                     "If it's domain-aware wiring, move that glue up to the composition-root, which is allowed to know everything.",
                 ],
             },
             Self::CompositionRoot => Remediation {
-                rule: "the composition-root may depend on every role — it's where wiring lives — so a forbidden edge out of it should be impossible.",
+                rationale: "the composition-root is where wiring lives: it is the one place allowed to name every role, so a forbidden edge out of it should be impossible.",
                 fixes: &[
                     "If you're seeing this, the role matrix changed or the crate is mislabeled; double-check the role tag, then file a bug.",
                 ],
@@ -291,10 +321,91 @@ mod tests {
     }
 
     #[test]
+    fn allowed_clause_names_exactly_the_matrix_row() {
+        // The clause holds nothing but role names and separators, and no role
+        // name is a substring of another (`no_role_name_contains_another`
+        // proves it), so `contains` here is an exact membership test.
+        for &consumer in ALL {
+            let clause: String = consumer.allowed_clause();
+            for &other in ALL {
+                assert_eq!(
+                    clause.contains(other.as_str()),
+                    consumer.allowed_deps().contains(&other),
+                    "{consumer:?}'s rendered clause disagrees with the matrix about {other:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_role_name_contains_another() {
+        // The premise `allowed_clause_names_exactly_the_matrix_row` rests on.
+        // A future role named e.g. `adapter` would silently weaken that test
+        // into a tautology, so state the premise and check it.
+        for &a in ALL {
+            for &b in ALL {
+                if a != b {
+                    assert!(
+                        !a.as_str().contains(b.as_str()),
+                        "role name {:?} contains {:?}; substring matching on \
+                         rendered role lists is no longer exact",
+                        a.as_str(),
+                        b.as_str()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rationale_never_restates_the_allowed_list() {
+        // The drift this guards against actually happened: adding `kernel`
+        // updated `allowed_deps` and left `domain`, `port-and-adapter`,
+        // `driven-adapter` and `driving-adapter` each stating a closed list
+        // that omitted it. The allowed set has exactly one author now —
+        // `allowed_clause` — so a rationale must never reach for this idiom.
+        // Naming a *forbidden* role stays welcome; that is the field's job.
+        const CLOSED_LIST_IDIOMS: &[&str] = &[
+            "may depend on",
+            "may depend only on",
+            "may only depend",
+            "depend on nothing but",
+            "depends only on",
+            "may depend upon",
+        ];
+        for &r in ALL {
+            let rationale: &str = r.remediation().rationale;
+            for idiom in CLOSED_LIST_IDIOMS {
+                assert!(
+                    !rationale.contains(idiom),
+                    "{r:?} rationale restates the allowed list (\"{idiom}\"); \
+                     that set is generated by `allowed_clause` — say why the \
+                     layer exists instead"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn contract_carries_both_the_generated_clause_and_the_rationale() {
+        for &r in ALL {
+            let contract: String = r.contract();
+            assert!(
+                contract.contains(&r.allowed_clause()),
+                "{r:?} contract dropped the generated allowed list"
+            );
+            assert!(
+                contract.contains(r.remediation().rationale),
+                "{r:?} contract dropped the rationale"
+            );
+        }
+    }
+
+    #[test]
     fn every_role_has_a_nonempty_rule_and_at_least_one_fix() {
         for &r in ALL {
             let rem = r.remediation();
-            assert!(!rem.rule.is_empty(), "{r:?} has empty rule");
+            assert!(!rem.rationale.is_empty(), "{r:?} has empty rationale");
             assert!(!rem.fixes.is_empty(), "{r:?} has no fixes");
             for fix in rem.fixes {
                 assert!(!fix.is_empty(), "{r:?} has an empty fix");

@@ -69,7 +69,11 @@ pub fn adoption(packages: &[WorkspacePackage]) -> Adoption {
 /// "here is how to fix the architecture" language.
 pub fn remediation() -> Remediation {
     Remediation {
-        rule: "a crate may depend only on crates in its own context, or in the shared context; the shared context may depend only on shared.",
+        // The context axis has no generated clause to defer to: its allowed set
+        // is a predicate over two tags, not a matrix row, so stating it here is
+        // the only statement of it. The role axis's rule against enumerating
+        // does not apply.
+        rationale: "a crate may depend only on crates in its own context, or in the shared context; the shared context may depend only on shared.",
         fixes: &[
             "If the crate you're reaching into really belongs to your context, move it there — or extract just the part you need into a crate in your own context.",
             "If it's a genuine cross-context contract, promote the shared type or trait into the `shared` context and depend on that instead.",
@@ -151,7 +155,7 @@ mod tests {
     #[test]
     fn remediation_states_the_rule_and_offers_a_concrete_fix() {
         let rem: Remediation = remediation();
-        assert!(!rem.rule.is_empty());
+        assert!(!rem.rationale.is_empty());
         assert!(!rem.fixes.is_empty());
         for fix in rem.fixes {
             assert!(!fix.is_empty());

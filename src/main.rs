@@ -168,14 +168,13 @@ EXCEPTIONS:
 
 fn print_explain(role: Role) {
     let rem: Remediation = role.remediation();
-    let allowed: Vec<&'static str> = role.allowed_deps().iter().map(|r| r.as_str()).collect();
 
     println!("hex-lint — role `{}`", role.as_str());
     println!();
-    println!("May depend on: {}", allowed.join(", "));
+    println!("May depend on: {}", role.allowed_clause());
     println!();
     println!("Contract:");
-    println!("    {}", rem.rule);
+    println!("    {}", rem.rationale);
     println!();
     println!(
         "If hex-lint flags a forbidden dependency out of a `{}` crate:",
@@ -389,7 +388,15 @@ fn render_text(
                 v.dep_role.as_str()
             );
             let rem: Remediation = v.consumer_role.remediation();
-            eprintln!("    why: {}", rem.rule);
+            eprintln!("    why: {}", rem.rationale);
+            // The allowed set, generated from the matrix. Without it the reader
+            // sees only what the layer must not do, which does not always name
+            // the rule that fired — an adapter reaching sideways into another
+            // adapter used to read as advice about infra.
+            eprintln!(
+                "    may depend on: {} — and nothing else.",
+                v.consumer_role.allowed_clause()
+            );
             for fix in rem.fixes {
                 eprintln!("    fix: {fix}");
             }
@@ -420,7 +427,7 @@ fn render_text(
             );
         }
         let rem: Remediation = context::remediation();
-        eprintln!("    why: {}", rem.rule);
+        eprintln!("    why: {}", rem.rationale);
         for fix in rem.fixes {
             eprintln!("    fix: {fix}");
         }
@@ -497,7 +504,7 @@ fn render_json(
                 ticket: exc.map(|e: &&Exception| e.ticket.as_str()),
                 reason: exc.map(|e: &&Exception| e.reason.as_str()),
                 remediation: JsonRemediation {
-                    rule: rem.rule,
+                    rule: v.consumer_role.contract(),
                     fixes: rem.fixes,
                 },
             }
@@ -521,7 +528,7 @@ fn render_json(
                 ticket: exc.map(|e: &&Exception| e.ticket.as_str()),
                 reason: exc.map(|e: &&Exception| e.reason.as_str()),
                 remediation: JsonRemediation {
-                    rule: context_rem.rule,
+                    rule: context_rem.rationale.to_owned(),
                     fixes: context_rem.fixes,
                 },
             }
@@ -681,7 +688,12 @@ struct JsonContextViolation<'a> {
 
 #[derive(Serialize)]
 struct JsonRemediation<'a> {
-    rule: &'a str,
+    /// The complete rule as one sentence. For a role that is
+    /// [`Role::contract`] — the generated allowed set plus the rationale — so
+    /// a machine consumer reads the same constraint the text output shows,
+    /// never a hand-written paraphrase of it. Owned because the allowed set is
+    /// rendered, not stored.
+    rule: String,
     fixes: &'a [&'a str],
 }
 

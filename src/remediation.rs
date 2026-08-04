@@ -10,8 +10,19 @@
 /// objective — recovers instead of thrashing.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Remediation {
-    /// One-sentence statement of the constraint that was violated.
-    pub rule: &'static str,
+    /// Why this layer exists, and what it must never reach for.
+    ///
+    /// Prose only. It must **not** restate which roles a consumer may depend
+    /// on: for the role axis that set is generated from `Role::allowed_deps`
+    /// by `Role::allowed_clause`, and a second hand-written copy is drift
+    /// waiting to happen. It already happened once — adding `kernel` updated
+    /// the matrix and left four role contracts stating a closed list that no
+    /// longer held. `role::tests::rationale_never_restates_the_allowed_list`
+    /// is the guard.
+    ///
+    /// Naming a role the consumer may *not* depend on is the point of this
+    /// field, and stays welcome.
+    pub rationale: &'static str,
     /// Concrete fix options, each a complete imperative sentence.
     pub fixes: &'static [&'static str],
 }
