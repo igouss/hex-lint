@@ -1,0 +1,24 @@
+# Mutants adjudicated EQUIVALENT — semantically identical to the original,
+# therefore unkillable. `just mutants-triage` subtracts these from every
+# sweep's survivors so a re-sweep shows only NEW survivors.
+#
+# A wrong entry here permanently hides a real test gap. Therefore:
+#
+#   1. ADMISSION REQUIRES ADVERSARIAL CONFIRMATION. Two independent refuters
+#      (lenses `test-writer` and `semantics`) must each have TRIED TO REFUTE
+#      and failed. One agent's plausible verdict is not evidence.
+#   2. NEVER BULLDOZE. Writing a contorted test to kill an equivalent mutant
+#      asserts implementation, not spec. Such a test is NOT committed to the
+#      suite — it is recorded below as `refutation.test_source`.
+#   3. DO NOT add entries to silence a sweep. A survivor you have not reasoned
+#      about is a TEST GAP: file a bead describing the untested BEHAVIOUR.
+#   4. A TIMEOUT verdict is never admissible. Re-run with a raised --timeout.
+#   5. Wrong entries are REVOKED IN PLACE (status = "revoked"), never deleted.
+#      The tombstone is shown at triage so nobody re-adjudicates the same lie.
+#
+# Every field of `key` is derived from source. No line numbers, anywhere.
+# See docs/MUTATION_TRIAGE.md, or run `mutants-triage robot-docs`, which
+# answers from the binary in any directory and cannot drift from it.
+# Validated by `just mutants-gates` (blocking inside `just verify`).
+schema = 1
+equivalent = []
