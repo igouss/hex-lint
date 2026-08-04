@@ -42,6 +42,8 @@ hex-lint: clean (42 workspace packages, 0 active violation(s) all sanctioned by 
 
 Each row says: *a crate of this role may depend on crates of these roles, and no others.* Workspace-internal `[dependencies]` and `[build-dependencies]` are checked. `[dev-dependencies]` are not — tests get to wire whatever they need.
 
+Every edge counts, whatever gate stands in front of it. An **optional** dependency, one behind a non-default **feature**, and one behind a `[target.'cfg(…)']` block are all real edges, so hex-lint resolves the workspace with all features enabled and checks them the same as any other.
+
 | Consumer            | May depend on |
 | ------------------- | ------------- |
 | `kernel`            | `kernel` |
@@ -63,6 +65,13 @@ The point of the matrix:
 - **`driving-adapter`** is what calls in: HTTP servers, CLIs, TUIs. They hold a usecase, take input, render output.
 - **`infra`** is framework / runtime / glue (logging, config loading, error types). May only depend on other `infra`. No domain knowledge.
 - **`composition-root`** is the binary or top-level crate that wires concrete adapters into usecases. The only place the full graph is allowed.
+
+**Adapters are leaves.** Read the two adapter rows again: neither names an adapter, not even its own role. A `driven-adapter` may not depend on another `driven-adapter`, a `driving-adapter` may not depend on another `driving-adapter`, and neither may depend on the other. Every other role is self-permitting; these two are deliberately not. An adapter is where the system meets something external, and a stack of adapters calling adapters is that boundary leaking inward.
+
+So when two adapters need the same code, you have two answers and the matrix admits no third:
+
+- **Shared plumbing** — argument parsing, a retry helper, a connection pool — goes into an `infra` crate they both depend on.
+- **Shared wiring** — one adapter needing a live instance of another — goes into the `composition-root`, which injects it already built.
 
 If your code doesn't fit, your code is wrong, or your matrix is wrong. Pick one.
 
@@ -114,7 +123,7 @@ reason   = "temporary reach-in until the shared contract is extracted"
 
 `axis` defaults to `"role"` when omitted, so every exception file written before this feature keeps parsing unchanged. Each check reads only its own axis: a `role` exception never suppresses a context violation, and vice versa. And exactly as with roles, a context exception that no longer matches a real violation is **stale** and fails the lint. The file rots loud on both axes.
 
-**What a green run certifies — precisely.** hex-lint enumerates the *full* `cargo metadata` dependency graph, and both predicates are **total**: role-matrix membership is defined for every (consumer, dep) role pair, and context equality-or-`shared` is defined for every context pair. There is no sampling, no heuristic, no approximation in either direction. So when hex-lint says clean, then over the crates *as you tagged them* no forbidden edge exists, on either axis. The one thing it cannot check is whether you tagged them correctly: a crate wearing the wrong `context` is a **user bug, not a tool bug**. That is the whole claim, and no more.
+**What a green run certifies — precisely.** hex-lint enumerates the *full* `cargo metadata` dependency graph — resolved with every feature enabled, so an edge that only one feature selection activates is still seen — and both predicates are **total**: role-matrix membership is defined for every (consumer, dep) role pair, and context equality-or-`shared` is defined for every context pair. There is no sampling, no heuristic, no approximation in either direction. So when hex-lint says clean, then over the crates *as you tagged them* no forbidden edge exists, on either axis. The one thing it cannot check is whether you tagged them correctly: a crate wearing the wrong `context` is a **user bug, not a tool bug**. That is the whole claim, and no more.
 
 **One named limitation.** Context isolation is enforced at the **crate-dependency level only** — the same granularity as roles, for the same reason: the crate is the only boundary Cargo tracks. A foreign type copy-pasted *inside* a crate, or two contexts sharing one crate and `use`-ing each other freely, is out of scope. hex-lint reads the dependency graph, not your source. If you want a context boundary enforced, the two sides have to live in different crates.
 
@@ -129,11 +138,10 @@ hex-lint explain usecase
 ```
 hex-lint — role `usecase`
 
-May depend on: domain, usecase, port-and-adapter
+May depend on: kernel, domain, usecase, port-and-adapter
 
 Contract:
-    a usecase orchestrates application behavior and may reach the outside world
-    only through ports — never an adapter or infra crate directly.
+    a usecase orchestrates application behavior and reaches the outside world only through ports — never an adapter or infra crate directly.
 
 If hex-lint flags a forbidden dependency out of a `usecase` crate:
   - Declare the capability you need as a port (trait) in a port-and-adapter crate and depend on that; a driven-adapter implements it.
@@ -188,6 +196,10 @@ OPTIONS:
     -e, --exceptions <PATH>    Exceptions TOML. Default: <workspace-root>/hex-lint-exceptions.toml
         --manifest-path <PATH> Path to a Cargo.toml in the workspace.
     -f, --format <FMT>         Output format: text (default) or json.
+        --capabilities         Print the machine-readable contract as JSON,
+                               then exit 0. Needs no workspace — read the role
+                               matrix, the context predicate and the exceptions
+                               schema before writing code, not after failing on it.
     -h, --help                 Print help.
     -V, --version              Print version.
 ```
