@@ -1,0 +1,7 @@
+# Acceptance: an exceptions entry naming a crate this workspace does not have
+# is a typo, not paid-off debt. `dom -> db` is a real violation, correctly
+# sanctioned; `ghost-crate -> phantom-crate` names two crates that do not
+# exist. The second used to be reported as "debt paid off".
+[workspace]
+resolver = "2"
+members = ["dom", "db"]

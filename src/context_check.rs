@@ -6,7 +6,7 @@
 //! axis-agnostic exception bookkeeping. This file is the context axis and only
 //! the context axis — deleting it must not touch the role axis.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::context;
 use crate::lint::{reconcile, Axis, AxisReport, DepEdge, Exception, WorkspacePackage};
@@ -57,9 +57,17 @@ pub fn run(
         .filter(|e: &&Exception| e.axis == Axis::Context)
         .collect();
 
-    reconcile(violations, &context_exceptions, |v: &ContextViolation| {
-        (v.consumer.clone(), v.dep.clone())
-    })
+    let known: BTreeSet<&str> = packages
+        .iter()
+        .map(|p: &WorkspacePackage| p.name.as_str())
+        .collect();
+
+    reconcile(
+        violations,
+        &context_exceptions,
+        &known,
+        |v: &ContextViolation| (v.consumer.clone(), v.dep.clone()),
+    )
 }
 
 #[cfg(test)]

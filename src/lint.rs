@@ -3,7 +3,7 @@
 //! Pure: no IO, no framework. Holds the shared DTOs built by the adapters
 //! (`workspace.rs`, `exceptions.rs`), the `Axis` tag that routes an exception
 //! to a check, a generic per-axis report, and the generic exception
-//! reconciliation (unsanctioned + stale set arithmetic). It knows nothing
+//! reconciliation (unsanctioned + stale + unknown-crate set arithmetic). It knows nothing
 //! about roles or contexts — each axis lives in its own use-case file and
 //! stands on this shared plumbing.
 
@@ -61,18 +61,39 @@ pub struct AxisReport<V> {
     pub violations: Vec<V>,
     /// Violations not covered by any exception on this axis.
     pub unsanctioned: Vec<V>,
-    /// This-axis exceptions that no longer match a real violation — debt paid off.
+    /// This-axis exceptions that match no violation, but whose two crates are
+    /// both workspace members — the debt was paid off and the entry outlived
+    /// it. Delete it.
     pub stale_exceptions: Vec<Exception>,
+    /// This-axis exceptions naming a crate that is not a workspace member at
+    /// all. Also unmatched, but for a different reason and with a different
+    /// fix: the name is a typo, or the crate was renamed or removed. Reporting
+    /// these as "debt paid off" told the reader to celebrate a typo.
+    pub unknown_crate_exceptions: Vec<Exception>,
+}
+
+/// The endpoints of `e` that are not workspace members.
+///
+/// Empty exactly when [`reconcile`] would call an unmatched `e` stale rather
+/// than unknown-crate. One definition, so the classification and the message
+/// explaining it can never disagree about which crate is missing.
+pub fn unknown_endpoints<'a>(e: &'a Exception, known_packages: &BTreeSet<&str>) -> Vec<&'a str> {
+    [e.consumer.as_str(), e.dep.as_str()]
+        .into_iter()
+        .filter(|name: &&str| !known_packages.contains(name))
+        .collect()
 }
 
 /// Axis-agnostic exception bookkeeping. Given this axis's raw violations and
 /// the exceptions already filtered to this axis, split violations into
-/// sanctioned/unsanctioned and surface exceptions that match no violation
-/// (stale). `key` projects a violation to its `(consumer, dep)` identity; this
-/// function never mentions roles or contexts.
+/// sanctioned/unsanctioned, then split the exceptions that match no violation
+/// into stale (both crates exist — debt paid off) and unknown-crate (a name
+/// the workspace does not have). `key` projects a violation to its
+/// `(consumer, dep)` identity; this function never mentions roles or contexts.
 pub fn reconcile<V: Clone>(
     violations: Vec<V>,
     axis_exceptions: &[&Exception],
+    known_packages: &BTreeSet<&str>,
     key: impl Fn(&V) -> (String, String),
 ) -> AxisReport<V> {
     let viol_keys: BTreeSet<(String, String)> = violations.iter().map(|v: &V| key(v)).collect();
@@ -87,23 +108,29 @@ pub fn reconcile<V: Clone>(
         .cloned()
         .collect();
 
-    let stale_exceptions: Vec<Exception> = axis_exceptions
-        .iter()
-        .copied()
-        .filter(|e: &&Exception| !viol_keys.contains(&(e.consumer.clone(), e.dep.clone())))
-        .cloned()
-        .collect();
+    // An unmatched entry is dishonest either way, and both ways fail the lint.
+    // They are split because the fix differs: a stale entry means delete it,
+    // an unknown-crate entry means correct the name.
+    let (stale_exceptions, unknown_crate_exceptions): (Vec<Exception>, Vec<Exception>) =
+        axis_exceptions
+            .iter()
+            .copied()
+            .filter(|e: &&Exception| !viol_keys.contains(&(e.consumer.clone(), e.dep.clone())))
+            .cloned()
+            .partition(|e: &Exception| unknown_endpoints(e, known_packages).is_empty());
 
     AxisReport {
         violations,
         unsanctioned,
         stale_exceptions,
+        unknown_crate_exceptions,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{reconcile, Axis, AxisReport, Exception};
+    use super::{reconcile, unknown_endpoints, Axis, AxisReport, Exception};
+    use std::collections::BTreeSet;
 
     fn exc(consumer: &str, dep: &str, axis: Axis) -> Exception {
         Exception {
@@ -119,9 +146,15 @@ mod tests {
         v.clone()
     }
 
+    /// The workspace every test below reconciles against: crates `a` … `d`.
+    /// A name outside this set is a crate the workspace does not have.
+    fn workspace() -> BTreeSet<&'static str> {
+        BTreeSet::from(["a", "b", "c", "d"])
+    }
+
     #[test]
     fn no_violations_and_no_exceptions_is_empty() {
-        let report: AxisReport<(String, String)> = reconcile(Vec::new(), &[], key);
+        let report: AxisReport<(String, String)> = reconcile(Vec::new(), &[], &workspace(), key);
         assert!(report.violations.is_empty());
         assert!(report.unsanctioned.is_empty());
         assert!(report.stale_exceptions.is_empty());
@@ -130,7 +163,7 @@ mod tests {
     #[test]
     fn violation_without_exception_is_unsanctioned() {
         let violations: Vec<(String, String)> = vec![("a".to_owned(), "b".to_owned())];
-        let report: AxisReport<(String, String)> = reconcile(violations, &[], key);
+        let report: AxisReport<(String, String)> = reconcile(violations, &[], &workspace(), key);
         assert_eq!(report.violations.len(), 1);
         assert_eq!(report.unsanctioned.len(), 1);
         assert!(report.stale_exceptions.is_empty());
@@ -141,7 +174,8 @@ mod tests {
         let violations: Vec<(String, String)> = vec![("a".to_owned(), "b".to_owned())];
         let e: Exception = exc("a", "b", Axis::Role);
         let exceptions: Vec<&Exception> = vec![&e];
-        let report: AxisReport<(String, String)> = reconcile(violations, &exceptions, key);
+        let report: AxisReport<(String, String)> =
+            reconcile(violations, &exceptions, &workspace(), key);
         assert_eq!(report.violations.len(), 1);
         assert!(report.unsanctioned.is_empty());
         assert!(report.stale_exceptions.is_empty());
@@ -151,11 +185,75 @@ mod tests {
     fn exception_matching_no_violation_is_stale() {
         let e: Exception = exc("a", "b", Axis::Role);
         let exceptions: Vec<&Exception> = vec![&e];
-        let report: AxisReport<(String, String)> = reconcile(Vec::new(), &exceptions, key);
+        let report: AxisReport<(String, String)> =
+            reconcile(Vec::new(), &exceptions, &workspace(), key);
         assert!(report.violations.is_empty());
         assert!(report.unsanctioned.is_empty());
         assert_eq!(report.stale_exceptions.len(), 1);
         assert_eq!(report.stale_exceptions[0].ticket, "TICK-1");
+    }
+
+    #[test]
+    fn exception_naming_a_crate_outside_the_workspace_is_unknown_not_stale() {
+        // "ghost" is not a workspace member. Calling this stale told the
+        // reader the debt had been paid off, which is a congratulation for a
+        // typo — and it hid that the real edge may still be there under the
+        // right name.
+        let e: Exception = exc("ghost", "b", Axis::Role);
+        let exceptions: Vec<&Exception> = vec![&e];
+        let report: AxisReport<(String, String)> =
+            reconcile(Vec::new(), &exceptions, &workspace(), key);
+        assert!(report.stale_exceptions.is_empty());
+        assert_eq!(report.unknown_crate_exceptions.len(), 1);
+        assert_eq!(report.unknown_crate_exceptions[0].ticket, "TICK-1");
+    }
+
+    #[test]
+    fn a_matched_exception_is_neither_stale_nor_unknown() {
+        // The zero case for both buckets: the entry is doing its job.
+        let violations: Vec<(String, String)> = vec![("a".to_owned(), "b".to_owned())];
+        let e: Exception = exc("a", "b", Axis::Role);
+        let exceptions: Vec<&Exception> = vec![&e];
+        let report: AxisReport<(String, String)> =
+            reconcile(violations, &exceptions, &workspace(), key);
+        assert!(report.stale_exceptions.is_empty());
+        assert!(report.unknown_crate_exceptions.is_empty());
+    }
+
+    #[test]
+    fn stale_and_unknown_are_reported_side_by_side() {
+        // Many, and mixed: one entry of each kind must land in its own bucket
+        // rather than one kind swallowing the other.
+        let stale: Exception = exc("a", "b", Axis::Role);
+        let unknown: Exception = exc("ghost", "phantom", Axis::Role);
+        let exceptions: Vec<&Exception> = vec![&stale, &unknown];
+        let report: AxisReport<(String, String)> =
+            reconcile(Vec::new(), &exceptions, &workspace(), key);
+        assert_eq!(report.stale_exceptions.len(), 1);
+        assert_eq!(report.stale_exceptions[0].consumer, "a");
+        assert_eq!(report.unknown_crate_exceptions.len(), 1);
+        assert_eq!(report.unknown_crate_exceptions[0].consumer, "ghost");
+    }
+
+    #[test]
+    fn unknown_endpoints_is_empty_when_both_crates_exist() {
+        assert!(unknown_endpoints(&exc("a", "b", Axis::Role), &workspace()).is_empty());
+    }
+
+    #[test]
+    fn unknown_endpoints_names_only_the_missing_side() {
+        assert_eq!(
+            unknown_endpoints(&exc("a", "phantom", Axis::Role), &workspace()),
+            vec!["phantom"]
+        );
+    }
+
+    #[test]
+    fn unknown_endpoints_names_both_when_neither_crate_exists() {
+        assert_eq!(
+            unknown_endpoints(&exc("ghost", "phantom", Axis::Role), &workspace()),
+            vec!["ghost", "phantom"]
+        );
     }
 
     #[test]
@@ -166,7 +264,8 @@ mod tests {
         ];
         let e: Exception = exc("a", "b", Axis::Role);
         let exceptions: Vec<&Exception> = vec![&e];
-        let report: AxisReport<(String, String)> = reconcile(violations, &exceptions, key);
+        let report: AxisReport<(String, String)> =
+            reconcile(violations, &exceptions, &workspace(), key);
         assert_eq!(report.violations.len(), 2);
         assert_eq!(report.unsanctioned.len(), 1);
         assert_eq!(report.unsanctioned[0], ("c".to_owned(), "d".to_owned()));

@@ -15,7 +15,8 @@ use crate::lint::Axis;
 pub enum Rule {
     /// Every workspace-internal edge respects the role matrix.
     RoleMatrix,
-    /// No exceptions-file entry outlives the violation it sanctions.
+    /// No exceptions-file entry outlives the violation it sanctions, and none
+    /// names a crate the workspace does not have.
     ExceptionsHonest,
     /// Every workspace-internal edge respects bounded-context isolation.
     ContextIsolation,
@@ -58,7 +59,7 @@ impl Rule {
                 "Every workspace-internal dep edge respects the hex-arch role matrix (or is sanctioned by hex-lint-exceptions.toml)."
             }
             Self::ExceptionsHonest => {
-                "Every entry in hex-lint-exceptions.toml corresponds to a real, current violation on its own axis (no stale debt)."
+                "Every entry in hex-lint-exceptions.toml names two workspace crates and corresponds to a real, current violation on its own axis (no stale debt, no crate that isn't there)."
             }
             Self::ContextIsolation => {
                 "Every workspace-internal dep edge respects bounded-context isolation (same context, or the dependency is shared; or is sanctioned by hex-lint-exceptions.toml)."

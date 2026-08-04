@@ -169,6 +169,8 @@ The file location can be overridden with `--exceptions <PATH>`. If no `--excepti
 
 **Stale exceptions fail the lint.** If you list a violation that no longer exists, hex-lint complains and exits non-zero. This is intentional — it means you can't paper over architectural debt and forget about it. The file rots loud.
 
+**An entry naming a crate that isn't there is reported separately.** An entry can go unmatched two ways, and they are not the same problem. If both crates are workspace members, the debt was paid off — delete the entry. If a name doesn't resolve to any workspace member, it is a typo, or the crate was renamed or removed; hex-lint names the crates it couldn't find and asks you to **correct the name, not delete the entry**. Deleting it would drop a sanction that the real edge may still need, turning a grandfathered dependency into a surprise failure later. Both fail the lint, and both are counted by the `exceptions-honest` rule; in `--format=json` they arrive as `stale_exceptions` and `unknown_crate_exceptions` (and their `context_`-prefixed twins).
+
 ## Pre-commit hook
 
 ```sh

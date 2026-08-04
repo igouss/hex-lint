@@ -1,0 +1,13 @@
+# A real violation, correctly sanctioned.
+[[exception]]
+consumer = "dom"
+dep      = "db"
+ticket   = "ARCH-1"
+reason   = "grandfathered until the port is extracted"
+
+# Neither crate is in this workspace.
+[[exception]]
+consumer = "ghost-crate"
+dep      = "phantom-crate"
+ticket   = "ARCH-2"
+reason   = "names nobody ever checked"

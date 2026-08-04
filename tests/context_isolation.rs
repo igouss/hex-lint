@@ -223,7 +223,38 @@ fn stale_context_exception_is_reported_as_debt() {
         "expected the stale-exception report: {err}"
     );
     assert!(
-        err.contains("shopping-usecase -> ghost-crate"),
+        err.contains("shopping-usecase -> shopping-domain"),
         "expected the stale entry: {err}"
+    );
+}
+
+#[test]
+fn context_axis_entry_naming_a_missing_crate_is_not_reported_as_debt() {
+    // The same shape as the role axis: unmatched, but because the name never
+    // resolved, not because the debt was paid off. Both axes read the same
+    // classification, so this pins that the context axis reaches it too.
+    let exceptions: String = format!(
+        "{}/tests/fixtures/context_exception_stale/unknown-crate-exception.toml",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let out: Output = common::run(
+        "context_exception_stale",
+        &["--exceptions", exceptions.as_str()],
+    );
+    assert!(!out.status.success(), "an unresolvable name must fail");
+    let err: String = stderr(&out);
+    assert!(
+        err.contains(
+            "context-axis exceptions file entries naming a crate that is not in this workspace"
+        ),
+        "expected the unknown-crate report: {err}"
+    );
+    assert!(
+        err.contains("not a workspace member: ghost-crate"),
+        "the missing crate must be named: {err}"
+    );
+    assert!(
+        !err.contains("debt paid off"),
+        "a name that never resolved is not paid-off debt: {err}"
     );
 }

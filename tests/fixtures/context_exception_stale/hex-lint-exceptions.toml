@@ -1,8 +1,14 @@
-# Stale on the CONTEXT axis: shopping-usecase -> ghost-crate is not a real edge,
-# so no violation matches this entry and hex-lint flags it as debt to remove.
+# Stale on the CONTEXT axis: shopping-usecase -> shopping-domain is a real edge
+# between two crates in the SAME context, so it is legal and no violation
+# matches this entry. Both crates exist, so this is paid-off debt, and hex-lint
+# asks for the entry to be removed.
+#
+# Both names must be real workspace members for this to test what it says: an
+# entry naming a crate that is not in the workspace is a different failure with
+# a different fix (see unknown-crate-exception.toml beside this file).
 [[exception]]
 consumer = "shopping-usecase"
-dep      = "ghost-crate"
+dep      = "shopping-domain"
 axis     = "context"
 ticket   = "ARCH-7"
 reason   = "the offending edge was deleted; this entry should be too"

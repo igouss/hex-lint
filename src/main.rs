@@ -26,6 +26,7 @@ mod role_check;
 mod rule;
 mod workspace;
 
+use std::collections::BTreeSet;
 use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -345,8 +346,10 @@ fn main() -> ExitCode {
         context_check::run(&ws.packages, &ws.edges, &exceptions);
     let had_problem: bool = !role_report.unsanctioned.is_empty()
         || !role_report.stale_exceptions.is_empty()
+        || !role_report.unknown_crate_exceptions.is_empty()
         || !context_report.unsanctioned.is_empty()
-        || !context_report.stale_exceptions.is_empty();
+        || !context_report.stale_exceptions.is_empty()
+        || !context_report.unknown_crate_exceptions.is_empty();
 
     match args.format {
         Format::Text => render_text(
@@ -373,6 +376,37 @@ fn main() -> ExitCode {
     }
 }
 
+/// Report exceptions naming a crate this workspace does not have.
+///
+/// Kept apart from the stale-exception report because the two mean different
+/// things and want different fixes: a stale entry is debt that was paid off
+/// and should be deleted, while this one is a name that never resolved — the
+/// debt it describes may well still be there, under the right name. Both axes
+/// print the same shape, so both call this.
+fn render_unknown_crate_exceptions(
+    axis_label: &str,
+    entries: &[Exception],
+    known: &BTreeSet<&str>,
+) {
+    if entries.is_empty() {
+        return;
+    }
+    eprintln!(
+        "hex-lint: {axis_label}exceptions file entries naming a crate that is not in this workspace:"
+    );
+    eprintln!("(typo, or the crate was renamed or removed — correct the name, don't just delete the entry)");
+    for e in entries {
+        eprintln!(
+            "  {} -> {}  [ticket={} reason={}]",
+            e.consumer, e.dep, e.ticket, e.reason
+        );
+        eprintln!(
+            "    not a workspace member: {}",
+            lint::unknown_endpoints(e, known).join(", ")
+        );
+    }
+}
+
 fn render_text(
     packages: &[lint::WorkspacePackage],
     role_report: &lint::AxisReport<role_check::RoleViolation>,
@@ -381,6 +415,11 @@ fn render_text(
     context_enabled: bool,
     had_problem: bool,
 ) {
+    let known: BTreeSet<&str> = packages
+        .iter()
+        .map(|p: &lint::WorkspacePackage| p.name.as_str())
+        .collect();
+
     if !role_report.unsanctioned.is_empty() {
         eprintln!("hex-lint: unsanctioned hex-arch role violations (not in exceptions file):");
         for v in &role_report.unsanctioned {
@@ -422,6 +461,8 @@ fn render_text(
         }
     }
 
+    render_unknown_crate_exceptions("", &role_report.unknown_crate_exceptions, &known);
+
     if !context_report.unsanctioned.is_empty() {
         eprintln!("hex-lint: unsanctioned context-isolation violations (not in exceptions file):");
         for v in &context_report.unsanctioned {
@@ -449,6 +490,12 @@ fn render_text(
             );
         }
     }
+
+    render_unknown_crate_exceptions(
+        "context-axis ",
+        &context_report.unknown_crate_exceptions,
+        &known,
+    );
 
     if !had_problem {
         println!(
@@ -551,6 +598,18 @@ fn render_json(
         .map(JsonException::from_lint)
         .collect();
 
+    let unknown_crate_exceptions: Vec<JsonException<'_>> = role_report
+        .unknown_crate_exceptions
+        .iter()
+        .map(JsonException::from_lint)
+        .collect();
+
+    let context_unknown_crate_exceptions: Vec<JsonException<'_>> = context_report
+        .unknown_crate_exceptions
+        .iter()
+        .map(JsonException::from_lint)
+        .collect();
+
     let exception_entries: Vec<JsonException<'_>> =
         exceptions.iter().map(JsonException::from_lint).collect();
 
@@ -584,8 +643,14 @@ fn render_json(
         .map(|&r: &Rule| {
             let failure_count: usize = match r {
                 Rule::RoleMatrix => role_report.unsanctioned.len(),
+                // Both ways an entry can be dishonest count here — stale, and
+                // naming a crate that is not in the workspace. Either fails the
+                // build via `had_problem`, so either must show up.
                 Rule::ExceptionsHonest => {
-                    role_report.stale_exceptions.len() + context_report.stale_exceptions.len()
+                    role_report.stale_exceptions.len()
+                        + context_report.stale_exceptions.len()
+                        + role_report.unknown_crate_exceptions.len()
+                        + context_report.unknown_crate_exceptions.len()
                 }
                 Rule::ContextIsolation => context_report.unsanctioned.len(),
             };
@@ -610,6 +675,8 @@ fn render_json(
         exceptions: exception_entries,
         stale_exceptions,
         context_stale_exceptions,
+        unknown_crate_exceptions,
+        context_unknown_crate_exceptions,
     };
 
     match serde_json::to_string_pretty(&out) {
@@ -636,6 +703,11 @@ struct JsonReport<'a> {
     exceptions: Vec<JsonException<'a>>,
     stale_exceptions: Vec<JsonException<'a>>,
     context_stale_exceptions: Vec<JsonException<'a>>,
+    /// Entries naming a crate that is not a workspace member. Held apart from
+    /// `stale_exceptions`, which means the narrower and older thing: the debt
+    /// was real and has been paid off.
+    unknown_crate_exceptions: Vec<JsonException<'a>>,
+    context_unknown_crate_exceptions: Vec<JsonException<'a>>,
 }
 
 #[derive(Serialize)]

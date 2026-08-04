@@ -1,0 +1,9 @@
+# The other way a context-axis entry can be unmatched: `ghost-crate` is not a
+# workspace member at all. Selected with `--exceptions` so one fixture proves
+# both classifications on the context axis.
+[[exception]]
+consumer = "shopping-usecase"
+dep      = "ghost-crate"
+axis     = "context"
+ticket   = "ARCH-8"
+reason   = "a name that never resolved"

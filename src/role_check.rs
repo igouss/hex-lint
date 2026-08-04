@@ -6,7 +6,7 @@
 //! bookkeeping. This file is the role axis and only the role axis — deleting it
 //! must not touch the context axis.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::lint::{reconcile, Axis, AxisReport, DepEdge, Exception, WorkspacePackage};
 use crate::role::Role;
@@ -55,7 +55,12 @@ pub fn run(
         .filter(|e: &&Exception| e.axis == Axis::Role)
         .collect();
 
-    reconcile(violations, &role_exceptions, |v: &RoleViolation| {
+    let known: BTreeSet<&str> = packages
+        .iter()
+        .map(|p: &WorkspacePackage| p.name.as_str())
+        .collect();
+
+    reconcile(violations, &role_exceptions, &known, |v: &RoleViolation| {
         (v.consumer.clone(), v.dep.clone())
     })
 }
