@@ -200,8 +200,12 @@ fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<ParseOutcome, S
                 let v: String = it
                     .next()
                     .ok_or_else(|| "explain requires a role name".to_owned())?;
-                let role: Role = Role::parse(&v)
-                    .ok_or_else(|| format!("unknown role `{v}` — see `hex-lint --help`"))?;
+                let role: Role = Role::parse(&v).ok_or_else(|| {
+                    format!(
+                        "unknown role `{v}` (expected one of: {})",
+                        Role::all_names()
+                    )
+                })?;
                 return Ok(ParseOutcome::Explain(role));
             }
             "-e" | "--exceptions" => {
@@ -894,6 +898,13 @@ mod tests {
     fn explain_unknown_role_is_an_error() {
         let err = parse_args(args(&["explain", "nonsense"])).unwrap_err();
         assert!(err.contains("nonsense"), "{err}");
+        for &r in Role::ALL {
+            assert!(
+                err.contains(r.as_str()),
+                "explain's error must offer `{}`, got: {err}",
+                r.as_str()
+            );
+        }
     }
 
     #[test]

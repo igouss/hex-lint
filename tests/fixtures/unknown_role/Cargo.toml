@@ -1,0 +1,7 @@
+# Acceptance: a member whose role tag is not a role must be told what the roles
+# ARE. `Role::parse` is exact-match, so a plausible near-miss like `Domain` or
+# `use-case` fails; the message carries the valid set so the reader fixes the
+# tag from the diagnostic instead of going to look for a list.
+[workspace]
+resolver = "2"
+members = ["mistagged"]

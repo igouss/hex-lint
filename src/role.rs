@@ -31,6 +31,19 @@ impl Role {
         Self::CompositionRoot,
     ];
 
+    /// Every role name, comma-separated, in outward order.
+    ///
+    /// For error messages that offer the valid set. Generated from [`Self::ALL`]
+    /// so a role added to the enum cannot go missing from the message that is
+    /// supposed to list it — the same reason [`Self::allowed_clause`] exists.
+    pub fn all_names() -> String {
+        Self::ALL
+            .iter()
+            .map(|r: &Role| r.as_str())
+            .collect::<Vec<&'static str>>()
+            .join(", ")
+    }
+
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s {
             "kernel" => Self::Kernel,
@@ -229,6 +242,22 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn all_names_lists_every_role_and_nothing_else() {
+        let names: String = Role::all_names();
+        for &r in ALL {
+            assert!(
+                names.contains(r.as_str()),
+                "{r:?} is missing from the offered role list"
+            );
+        }
+        assert_eq!(
+            names.split(", ").count(),
+            ALL.len(),
+            "the offered role list has an entry that is not a role: {names}"
+        );
     }
 
     #[test]

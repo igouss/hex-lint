@@ -53,10 +53,24 @@ struct HexArch {
 /// context — carrying the tag is all this adapter does; the context domain
 /// decides what it means.
 fn extract_hex_arch(pkg: &Package) -> Result<(Role, Option<String>), String> {
-    let meta: HexArchMeta = serde_json::from_value(pkg.metadata.clone())
-        .map_err(|_| "missing package.metadata.hex-arch.role".to_owned())?;
-    let role: Role = Role::parse(&meta.hex_arch.role)
-        .ok_or_else(|| format!("unknown role `{}`", meta.hex_arch.role))?;
+    // Both failures name the valid set. A role tag is the one thing every
+    // member must carry, and it is the first thing anyone adopting hex-lint
+    // writes — being told only that the value is wrong, without being told
+    // what would be right, sends the reader to the README for a list the tool
+    // already knows.
+    let meta: HexArchMeta = serde_json::from_value(pkg.metadata.clone()).map_err(|_| {
+        format!(
+            "missing package.metadata.hex-arch.role (expected one of: {})",
+            Role::all_names()
+        )
+    })?;
+    let role: Role = Role::parse(&meta.hex_arch.role).ok_or_else(|| {
+        format!(
+            "unknown role `{}` (expected one of: {})",
+            meta.hex_arch.role,
+            Role::all_names()
+        )
+    })?;
     Ok((role, meta.hex_arch.context))
 }
 
