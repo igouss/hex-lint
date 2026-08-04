@@ -156,8 +156,9 @@ impl Role {
                 ],
             },
             Self::DrivingAdapter => Remediation {
-                rationale: "a driving-adapter turns external input into a usecase call. It cannot depend on a driven-adapter or on infra directly.",
+                rationale: "a driving-adapter turns external input into a usecase call. It cannot depend on a driven-adapter or on infra directly, and it cannot reach sideways into another adapter: adapters are leaves.",
                 fixes: &[
+                    "If two driving adapters share code — argument parsing, rendering, a transport helper — extract it into an infra crate they both depend on.",
                     "Whatever infra or driven-adapter you're reaching for should be injected by the composition-root, already wired.",
                     "If you're tempted to instantiate an adapter here, that construction belongs in the composition-root.",
                 ],
@@ -397,6 +398,28 @@ mod tests {
             assert!(
                 contract.contains(r.remediation().rationale),
                 "{r:?} contract dropped the rationale"
+            );
+        }
+    }
+
+    #[test]
+    fn both_adapter_roles_state_the_leaf_rule_and_offer_the_sharing_fix() {
+        // `adapters_are_leaves` pins the matrix; this pins that the user is
+        // told. The driving-adapter contract used to omit the rule entirely,
+        // so a CLI crate depending on a second CLI crate was told "never on
+        // driven adapters or infra directly" — neither of which it had
+        // touched — and offered two fixes that both said "let the
+        // composition-root inject it". That is the recovery for a dependency
+        // you need wired, not for code two adapters share.
+        for adapter in [Role::DrivenAdapter, Role::DrivingAdapter] {
+            let rem = adapter.remediation();
+            assert!(
+                rem.rationale.contains("leaves"),
+                "{adapter:?} must tell the reader that adapters are leaves"
+            );
+            assert!(
+                rem.fixes.iter().any(|f: &&str| f.contains("infra crate")),
+                "{adapter:?} must offer extracting shared code into an infra crate"
             );
         }
     }
