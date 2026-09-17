@@ -128,8 +128,9 @@ fn context_axis() -> Value {
         "optional": true,
         "adoption": "all-or-nothing: zero members declare a context (axis off), every member declares one (axis on), or some do and some do not (hard error — partial adoption is meaningless)",
         "reserved_context": context::SHARED,
-        "predicate": "consumer -> dep passes iff consumer.context == dep.context OR dep.context == \"shared\"",
+        "predicate": "consumer -> dep passes iff consumer.role == \"composition-root\" OR consumer.context == dep.context OR dep.context == \"shared\"",
         "predicate_note": "This subsumes \"shared may depend only on shared\": a shared consumer passes only when the dependency is also shared.",
+        "exemption": "A composition-root crate is not judged on this axis: it sits outside every context in order to wire them together. The role matrix forbids every other role from depending on a composition root, so the exemption cannot become a way into another context.",
         "orthogonal_to_roles": true,
         "rule": rem.rationale,
         "fixes": rem.fixes,
@@ -299,6 +300,25 @@ mod tests {
         let d: Value = doc();
         assert_eq!(d["context_axis"]["reserved_context"], context::SHARED);
         assert_eq!(d["context_axis"]["rule"], context::remediation().rationale);
+    }
+
+    #[test]
+    fn the_context_predicate_publishes_its_exemption() {
+        // An agent placing a composition root reads the predicate, not the
+        // prose. If the exemption is only in the prose, the formal statement
+        // the agent keys on is wrong.
+        let d: Value = doc();
+        let predicate: &str = d["context_axis"]["predicate"]
+            .as_str()
+            .expect("predicate is a string");
+        assert!(
+            predicate.contains(Role::CompositionRoot.as_str()),
+            "the published predicate must name the exempt role: {predicate}"
+        );
+        assert!(
+            d["context_axis"]["exemption"].is_string(),
+            "the exemption must be published as its own field"
+        );
     }
 
     #[test]

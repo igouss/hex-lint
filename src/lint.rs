@@ -2,10 +2,11 @@
 //!
 //! Pure: no IO, no framework. Holds the shared DTOs built by the adapters
 //! (`workspace.rs`, `exceptions.rs`), the `Axis` tag that routes an exception
-//! to a check, a generic per-axis report, and the generic exception
-//! reconciliation (unsanctioned + stale + unknown-crate set arithmetic). It knows nothing
-//! about roles or contexts — each axis lives in its own use-case file and
-//! stands on this shared plumbing.
+//! to a check, a generic per-axis report, the generic exception reconciliation
+//! (unsanctioned + stale + unknown-crate set arithmetic), and the one standing
+//! both axes read — [`WiringRoot`]. It enforces neither axis's rules: each axis
+//! lives in its own use-case file and stands on this shared plumbing, so
+//! neither ever has to name the other.
 
 use std::collections::BTreeSet;
 
@@ -22,6 +23,34 @@ pub struct WorkspacePackage {
     pub name: String,
     pub role: Role,
     pub context: Option<String>,
+}
+
+/// Witness that a crate wires the system together instead of living inside one
+/// part of it — its declared role is `composition-root`.
+///
+/// The field is private and [`WiringRoot::of`] is the only constructor, so a
+/// call site cannot assert this standing: it can only be handed one that a role
+/// tag earned. Every rule that exempts a composition root takes this value
+/// rather than re-reading the tag, so no two of them can disagree about what a
+/// root is, and a surface that speaks for a root cannot be reached without one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WiringRoot(());
+
+impl WiringRoot {
+    /// The witness `role` earns, if it earns one.
+    pub fn of(role: Role) -> Option<Self> {
+        match role {
+            Role::CompositionRoot => Some(Self(())),
+            _ => None,
+        }
+    }
+}
+
+impl WorkspacePackage {
+    /// This package's wiring witness, if its role earns one.
+    pub fn wiring_root(&self) -> Option<WiringRoot> {
+        WiringRoot::of(self.role)
+    }
 }
 
 /// A workspace-internal dependency edge (runtime or build, not dev).
@@ -129,7 +158,8 @@ pub fn reconcile<V: Clone>(
 
 #[cfg(test)]
 mod tests {
-    use super::{reconcile, unknown_endpoints, Axis, AxisReport, Exception};
+    use super::{reconcile, unknown_endpoints, Axis, AxisReport, Exception, WiringRoot};
+    use crate::role::Role;
     use std::collections::BTreeSet;
 
     fn exc(consumer: &str, dep: &str, axis: Axis) -> Exception {
@@ -144,6 +174,40 @@ mod tests {
 
     fn key(v: &(String, String)) -> (String, String) {
         v.clone()
+    }
+
+    #[test]
+    fn the_composition_root_earns_the_wiring_witness() {
+        assert!(WiringRoot::of(Role::CompositionRoot).is_some());
+    }
+
+    #[test]
+    fn no_other_role_earns_the_wiring_witness() {
+        // Quantified over the whole role enumeration, so a role added later
+        // cannot quietly acquire the standing: the earned list must stay empty.
+        let earned: Vec<&'static str> = Role::ALL
+            .iter()
+            .filter(|&&r: &&Role| r != Role::CompositionRoot)
+            .filter(|&&r: &&Role| WiringRoot::of(r).is_some())
+            .map(|&r: &Role| r.as_str())
+            .collect();
+        assert_eq!(earned, Vec::<&'static str>::new());
+    }
+
+    #[test]
+    fn a_package_carries_the_witness_of_its_declared_role() {
+        let root: super::WorkspacePackage = super::WorkspacePackage {
+            name: "wiring".to_owned(),
+            role: Role::CompositionRoot,
+            context: None,
+        };
+        let leaf: super::WorkspacePackage = super::WorkspacePackage {
+            name: "shell".to_owned(),
+            role: Role::Usecase,
+            context: None,
+        };
+        assert_eq!(root.wiring_root(), WiringRoot::of(Role::CompositionRoot));
+        assert_eq!(leaf.wiring_root(), None);
     }
 
     /// The workspace every test below reconciles against: crates `a` … `d`.

@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::context;
+use crate::context::{self, Standing};
 use crate::lint::{reconcile, Axis, AxisReport, DepEdge, Exception, WorkspacePackage};
 
 /// One context-isolation violation with both contexts attached for reporting.
@@ -24,25 +24,31 @@ pub struct ContextViolation {
 /// Any edge whose consumer or dep isn't in `packages` (foreign edge) or whose
 /// endpoint declares no context is dropped — so with the axis disabled (every
 /// context `None`) every edge is skipped and the report is naturally empty.
+/// An edge out of a crate that stands outside the contexts is not judged; the
+/// consumer's standing comes from the witness its role earned, so this file
+/// never reads a role tag of its own.
 pub fn run(
     packages: &[WorkspacePackage],
     edges: &[DepEdge],
     exceptions: &[Exception],
 ) -> AxisReport<ContextViolation> {
-    let context_by_name: BTreeMap<&str, Option<&str>> = packages
+    let by_name: BTreeMap<&str, &WorkspacePackage> = packages
         .iter()
-        .map(|p: &WorkspacePackage| (p.name.as_str(), p.context.as_deref()))
+        .map(|p: &WorkspacePackage| (p.name.as_str(), p))
         .collect();
 
     let mut violations: Vec<ContextViolation> = Vec::new();
     for edge in edges {
-        let (Some(&Some(cc)), Some(&Some(dc))) = (
-            context_by_name.get(edge.consumer.as_str()),
-            context_by_name.get(edge.dep.as_str()),
+        let (Some(consumer), Some(dep)) = (
+            by_name.get(edge.consumer.as_str()),
+            by_name.get(edge.dep.as_str()),
         ) else {
             continue;
         };
-        if !context::allows(cc, dc) {
+        let (Some(cc), Some(dc)) = (consumer.context.as_deref(), dep.context.as_deref()) else {
+            continue;
+        };
+        if !context::allows(Standing::of(cc, consumer.wiring_root()), dc) {
             violations.push(ContextViolation {
                 consumer: edge.consumer.clone(),
                 consumer_context: cc.to_owned(),
@@ -73,13 +79,23 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::{run, ContextViolation};
-    use crate::lint::{Axis, AxisReport, DepEdge, Exception, WorkspacePackage};
+    use crate::lint::{Axis, AxisReport, DepEdge, Exception, WiringRoot, WorkspacePackage};
     use crate::role::Role;
 
     fn pkg(name: &str, context: Option<&str>) -> WorkspacePackage {
         WorkspacePackage {
             name: name.to_owned(),
             role: Role::Domain,
+            context: context.map(|c: &str| c.to_owned()),
+        }
+    }
+
+    /// A package that wires the system together: the one role whose edges this
+    /// axis does not judge.
+    fn root(name: &str, context: Option<&str>) -> WorkspacePackage {
+        WorkspacePackage {
+            name: name.to_owned(),
+            role: Role::CompositionRoot,
             context: context.map(|c: &str| c.to_owned()),
         }
     }
@@ -185,6 +201,124 @@ mod tests {
         assert_eq!(report.violations.len(), 1);
         assert_eq!(report.unsanctioned.len(), 1);
         assert!(report.stale_exceptions.is_empty());
+    }
+
+    // --- the composition-root exemption: zero, one and many edges out of a
+    //     root, and the same edges out of a crate that is not one.
+
+    #[test]
+    fn a_root_that_leaves_its_own_context_alone_is_clean() {
+        let packages: Vec<WorkspacePackage> =
+            vec![root("wiring", Some("app")), pkg("helper", Some("app"))];
+        let edges: Vec<DepEdge> = vec![edge("wiring", "helper")];
+        let report: AxisReport<ContextViolation> = run(&packages, &edges, &[]);
+        assert!(report.violations.is_empty());
+    }
+
+    #[test]
+    fn a_root_reaching_one_other_context_is_clean() {
+        let packages: Vec<WorkspacePackage> = vec![
+            root("wiring", Some("app")),
+            pkg("shopping", Some("shopping")),
+        ];
+        let edges: Vec<DepEdge> = vec![edge("wiring", "shopping")];
+        let report: AxisReport<ContextViolation> = run(&packages, &edges, &[]);
+        assert!(report.violations.is_empty());
+    }
+
+    #[test]
+    fn a_root_reaching_two_other_contexts_is_clean() {
+        let packages: Vec<WorkspacePackage> = vec![
+            root("wiring", Some("app")),
+            pkg("shopping", Some("shopping")),
+            pkg("pantry", Some("pantry")),
+        ];
+        let edges: Vec<DepEdge> = vec![edge("wiring", "shopping"), edge("wiring", "pantry")];
+        let report: AxisReport<ContextViolation> = run(&packages, &edges, &[]);
+        assert!(report.violations.is_empty());
+        assert!(report.unsanctioned.is_empty());
+    }
+
+    #[test]
+    fn a_crate_that_is_not_a_root_reaching_the_same_two_contexts_is_two_violations() {
+        // The contrast that makes the exemption an exemption rather than a
+        // loosening: identical edges, identical contexts, no witness.
+        let packages: Vec<WorkspacePackage> = vec![
+            pkg("wiring", Some("app")),
+            pkg("shopping", Some("shopping")),
+            pkg("pantry", Some("pantry")),
+        ];
+        let edges: Vec<DepEdge> = vec![edge("wiring", "shopping"), edge("wiring", "pantry")];
+        let report: AxisReport<ContextViolation> = run(&packages, &edges, &[]);
+        assert_eq!(report.violations.len(), 2);
+        assert_eq!(report.unsanctioned.len(), 2);
+    }
+
+    /// Every context pair this axis can tell apart. The predicate reads its two
+    /// arguments only through `==` against each other and against the reserved
+    /// name, so these four classes exhaust its domain up to renaming.
+    const CONTEXT_CLASSES: &[(&str, &str)] = &[
+        ("shopping", "shopping"),
+        ("shopping", "shared"),
+        ("shopping", "pantry"),
+        ("shared", "pantry"),
+    ];
+
+    /// Whether a consumer in `cc` may depend on a crate in `dc`, as the axis
+    /// read it before any exemption existed. Written out here rather than
+    /// called from `context`, so the property below tests the rule instead of
+    /// restating the implementation.
+    fn isolated(cc: &str, dc: &str) -> bool {
+        cc == dc || dc == "shared"
+    }
+
+    /// Every (role, consumer context, dependency context) the property covers.
+    fn cases() -> impl Iterator<Item = (Role, &'static str, &'static str)> {
+        Role::ALL.iter().flat_map(|&role: &Role| {
+            CONTEXT_CLASSES
+                .iter()
+                .map(move |&(cc, dc): &(&'static str, &'static str)| (role, cc, dc))
+        })
+    }
+
+    /// How many violations the axis reports for a lone edge out of a crate with
+    /// `role` in context `cc`, into a crate in context `dc`.
+    fn verdict(role: Role, cc: &str, dc: &str) -> usize {
+        let packages: Vec<WorkspacePackage> = vec![
+            WorkspacePackage {
+                name: "consumer".to_owned(),
+                role,
+                context: Some(cc.to_owned()),
+            },
+            pkg("dep", Some(dc)),
+        ];
+        let edges: Vec<DepEdge> = vec![edge("consumer", "dep")];
+        run(&packages, &edges, &[]).violations.len()
+    }
+
+    #[test]
+    fn the_exemption_changes_the_verdict_only_for_a_wiring_root() {
+        // Quantified over every role the tool knows, crossed with every context
+        // class: the axis answers exactly what it answered before the exemption
+        // existed, except out of a crate holding the wiring witness, where it
+        // answers "no violation" whatever the contexts are.
+        let actual: Vec<(&str, &str, &str, usize)> = cases()
+            .map(|(role, cc, dc): (Role, &str, &str)| {
+                (role.as_str(), cc, dc, verdict(role, cc, dc))
+            })
+            .collect();
+        let expected: Vec<(&str, &str, &str, usize)> = cases()
+            .map(|(role, cc, dc): (Role, &str, &str)| {
+                let unexempt: usize = usize::from(!isolated(cc, dc));
+                (
+                    role.as_str(),
+                    cc,
+                    dc,
+                    WiringRoot::of(role).map_or(unexempt, |_: WiringRoot| 0),
+                )
+            })
+            .collect();
+        assert_eq!(actual, expected);
     }
 
     #[test]

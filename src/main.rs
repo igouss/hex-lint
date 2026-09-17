@@ -33,7 +33,7 @@ use std::process::ExitCode;
 
 use serde::Serialize;
 
-use crate::lint::{Axis, Exception};
+use crate::lint::{Axis, Exception, WiringRoot};
 use crate::remediation::Remediation;
 use crate::role::Role;
 use crate::rule::Rule;
@@ -154,6 +154,11 @@ CONTEXT ISOLATION (optional, orthogonal to roles):
     the one reserved name — any crate may depend on it; it may depend only on
     itself. Every other name is free-form.
 
+    A `composition-root` crate is exempt: it sits outside every context in
+    order to wire them together, so it may name crates in any of them. No other
+    role may depend on a composition root, so the exemption opens no way into a
+    context.
+
     Opt-in and all-or-nothing: zero contexts = axis off (roles only); a context
     on every member = axis on; a context on only SOME members is a hard error
     (partial adoption) that exits non-zero before any check runs.
@@ -176,6 +181,9 @@ fn print_explain(role: Role) {
     println!();
     println!("Contract:");
     println!("    {}", rem.rationale);
+    if let Some(root) = WiringRoot::of(role) {
+        print_context_exemption(root);
+    }
     println!();
     println!(
         "If hex-lint flags a forbidden dependency out of a `{}` crate:",
@@ -184,6 +192,15 @@ fn print_explain(role: Role) {
     for fix in rem.fixes {
         println!("  - {fix}");
     }
+}
+
+/// What the context axis says to a crate that stands outside every context.
+/// Takes the witness, so `explain` cannot print this under a role that has not
+/// earned it.
+fn print_context_exemption(root: WiringRoot) {
+    println!();
+    println!("Context isolation:");
+    println!("    {}", context::exemption_note(root));
 }
 
 fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<ParseOutcome, String> {
@@ -1022,6 +1039,10 @@ mod tests {
         assert!(
             help.contains("partial adoption"),
             "help must state the all-or-nothing adoption rule"
+        );
+        assert!(
+            help.contains("is exempt"),
+            "help must state the context axis's one exemption"
         );
 
         // Exceptions cover both axes.

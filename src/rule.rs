@@ -62,7 +62,7 @@ impl Rule {
                 "Every entry in hex-lint-exceptions.toml names two workspace crates and corresponds to a real, current violation on its own axis (no stale debt, no crate that isn't there)."
             }
             Self::ContextIsolation => {
-                "Every workspace-internal dep edge respects bounded-context isolation (same context, or the dependency is shared; or is sanctioned by hex-lint-exceptions.toml)."
+                "Every workspace-internal dep edge respects bounded-context isolation (same context, or the dependency is shared, or the consumer is a composition-root, which sits outside every context in order to wire them together; or is sanctioned by hex-lint-exceptions.toml)."
             }
         }
     }
@@ -122,5 +122,20 @@ mod tests {
     #[test]
     fn exceptions_rule_is_axis_neutral() {
         assert_eq!(Rule::ExceptionsHonest.axis(), None);
+    }
+
+    #[test]
+    fn the_context_rule_states_its_exemption() {
+        // This description is the rule as every JSON report and the published
+        // contract state it. A reader who is placing a composition root reads
+        // it before the tool ever judges an edge, so it has to say that a root
+        // is not judged.
+        assert!(
+            Rule::ContextIsolation
+                .description()
+                .contains("composition-root"),
+            "the context rule must state its exemption: {}",
+            Rule::ContextIsolation.description()
+        );
     }
 }

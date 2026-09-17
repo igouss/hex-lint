@@ -1,0 +1,7 @@
+# The exemption is not a back door: `app-shell` (usecase, app) depends on
+# `app-wiring` (composition-root, app). Both crates sit in one context, so the
+# context axis is clean; the role matrix forbids every role but a root from
+# naming a root, so the ROLE axis fails.
+[workspace]
+resolver = "2"
+members = ["app-wiring", "app-shell"]
