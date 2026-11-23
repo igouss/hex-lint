@@ -14,10 +14,12 @@ pub enum Role {
     DrivingAdapter,
     Infra,
     CompositionRoot,
+    Tool,
 }
 
 impl Role {
-    /// Every role, in outward order. The single enumeration: the JSON matrix,
+    /// Every role, in outward order, then `tool`, which stands outside that
+    /// order: it is no part of the running system. The single enumeration: the JSON matrix,
     /// `explain`'s role listing, and the matrix property tests all read this,
     /// so a role added to the enum cannot be silently missing from any of them.
     pub const ALL: &'static [Self] = &[
@@ -29,9 +31,10 @@ impl Role {
         Self::DrivingAdapter,
         Self::Infra,
         Self::CompositionRoot,
+        Self::Tool,
     ];
 
-    /// Every role name, comma-separated, in outward order.
+    /// Every role name, comma-separated, in the order of [`Self::ALL`].
     ///
     /// For error messages that offer the valid set. Generated from [`Self::ALL`]
     /// so a role added to the enum cannot go missing from the message that is
@@ -54,6 +57,7 @@ impl Role {
             "driving-adapter" => Self::DrivingAdapter,
             "infra" => Self::Infra,
             "composition-root" => Self::CompositionRoot,
+            "tool" => Self::Tool,
             _ => return None,
         })
     }
@@ -68,6 +72,7 @@ impl Role {
             Self::DrivingAdapter => "driving-adapter",
             Self::Infra => "infra",
             Self::CompositionRoot => "composition-root",
+            Self::Tool => "tool",
         }
     }
 
@@ -75,7 +80,7 @@ impl Role {
     pub fn allowed_deps(self) -> &'static [Self] {
         use Role::{
             CompositionRoot, Domain, DrivenAdapter, DrivingAdapter, Infra, Kernel, PortAndAdapter,
-            Usecase,
+            Tool, Usecase,
         };
         match self {
             Kernel => &[Kernel],
@@ -95,6 +100,7 @@ impl Role {
                 Infra,
                 CompositionRoot,
             ],
+            Tool => &[Tool],
         }
     }
 
@@ -126,8 +132,7 @@ impl Role {
     }
 
     /// Recovery guidance for a forbidden dependency *out of* a crate with this
-    /// role. Pure static advice; total over every role (composition-root can't
-    /// actually produce a violation, but the function still answers).
+    /// role. Pure static advice; total over every role.
     ///
     /// The rationale says *why*; it never enumerates the allowed set. See
     /// [`Remediation::rationale`] and [`Role::allowed_clause`].
@@ -180,13 +185,22 @@ impl Role {
                 rationale: "infra is framework, runtime, and glue with zero domain knowledge.",
                 fixes: &[
                     "If this crate needs a domain or adapter type, it isn't infra — retag it for the layer it actually serves.",
-                    "If it's domain-aware wiring, move that glue up to the composition-root, which is allowed to know everything.",
+                    "If it's domain-aware wiring, move that glue up to the composition-root, which is allowed to know every part of the running system.",
                 ],
             },
             Self::CompositionRoot => Remediation {
-                rationale: "the composition-root is where wiring lives: it is the one place allowed to name every role, so a forbidden edge out of it should be impossible.",
+                rationale: "the composition-root is where wiring lives: it assembles every part of the running system. A tool is no part of that system, so the root cannot name one — the shipped binary would carry the checker.",
                 fixes: &[
-                    "If you're seeing this, the role matrix changed or the crate is mislabeled; double-check the role tag, then file a bug.",
+                    "If the root needs what a tool does — a check, a generated file — run the tool beside the build and consume its output; never link it.",
+                    "If the crate you reached for is code the running system needs, it isn't a tool — retag it for the role it plays at runtime.",
+                ],
+            },
+            Self::Tool => Remediation {
+                rationale: "a tool checks or generates from the workspace — a gate runner, a view generator, an xtask — and is no part of the running system. It reads the other crates as source and cargo metadata instead of linking them, so it still builds when the code it checks is broken.",
+                fixes: &[
+                    "If you need another crate's types or behaviour, read its source or `cargo metadata` instead of linking it: a tool that links a crate cannot run while that crate fails to build.",
+                    "If two tools share code, extract it into a third tool crate they both depend on.",
+                    "If this crate is part of what the system runs, it isn't a tool — retag it for the role it plays there.",
                 ],
             },
         }

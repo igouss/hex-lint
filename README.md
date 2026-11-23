@@ -1,6 +1,6 @@
 # hex-lint
 
-A Cargo workspace lint that enforces hexagonal-architecture role boundaries. You tag each workspace member with a role (`domain`, `usecase`, `port-and-adapter`, `driven-adapter`, `driving-adapter`, `infra`, `composition-root`) and `hex-lint` walks your workspace dependency graph and fails the build on any cross-role edge that the matrix forbids. Grandfathered debt is recorded in an exceptions file; **stale exceptions also fail the lint**, so the file is forced to stay honest as debt is paid off.
+A Cargo workspace lint that enforces hexagonal-architecture role boundaries. You tag each workspace member with a role (`kernel`, `domain`, `usecase`, `port-and-adapter`, `driven-adapter`, `driving-adapter`, `infra`, `composition-root`, `tool`) and `hex-lint` walks your workspace dependency graph and fails the build on any cross-role edge that the matrix forbids. Grandfathered debt is recorded in an exceptions file; **stale exceptions also fail the lint**, so the file is forced to stay honest as debt is paid off.
 
 This is opinionated. The role matrix is hardcoded. If you want a different matrix, fork it.
 
@@ -19,7 +19,7 @@ In every workspace member's `Cargo.toml`:
 ```toml
 [package.metadata.hex-arch]
 role = "domain"   # or kernel, usecase, port-and-adapter, driven-adapter,
-                  # driving-adapter, infra, composition-root
+                  # driving-adapter, infra, composition-root, tool
 ```
 
 A workspace member without a role is a hard error.
@@ -53,7 +53,8 @@ Every edge counts, whatever gate stands in front of it. An **optional** dependen
 | `driven-adapter`    | `kernel`, `domain`, `port-and-adapter`, `infra` |
 | `driving-adapter`   | `kernel`, `domain`, `usecase`, `port-and-adapter` |
 | `infra`             | `infra` |
-| `composition-root`  | everything (this is where wiring lives) |
+| `composition-root`  | every role but `tool` (this is where wiring lives) |
+| `tool`              | `tool` |
 
 The point of the matrix:
 
@@ -64,7 +65,8 @@ The point of the matrix:
 - **`driven-adapter`** implements ports against real infrastructure (DB, HTTP client, filesystem). Imports `infra` for plumbing.
 - **`driving-adapter`** is what calls in: HTTP servers, CLIs, TUIs. They hold a usecase, take input, render output.
 - **`infra`** is framework / runtime / glue (logging, config loading, error types). May only depend on other `infra`. No domain knowledge.
-- **`composition-root`** is the binary or top-level crate that wires concrete adapters into usecases. The only place the full graph is allowed.
+- **`composition-root`** is the binary or top-level crate that wires concrete adapters into usecases. The only place the whole running system is allowed. It may not name a `tool`: a shipped binary has no business carrying its own checker.
+- **`tool`** is a gate runner, a view generator or an xtask: it reads the workspace and is no part of the running system. It reads the other crates as source and `cargo metadata`, never links them, so it still builds when a planted mutant has broken `domain` — which is exactly when a gate has to run. Tools may share code through another `tool`; nothing else may depend on one.
 
 **Adapters are leaves.** Read the two adapter rows again: neither names an adapter, not even its own role. A `driven-adapter` may not depend on another `driven-adapter`, a `driving-adapter` may not depend on another `driving-adapter`, and neither may depend on the other. Every other role is self-permitting; these two are deliberately not. An adapter is where the system meets something external, and a stack of adapters calling adapters is that boundary leaking inward.
 
@@ -108,7 +110,7 @@ context = "shopping"
 
 **The rule is one total predicate.** An edge `consumer → dep` passes iff `consumer.context == dep.context` **or** `dep.context == "shared"`. That single line already subsumes "a shared crate may depend only on shared": a `shared` consumer passes only when its dependency is also `shared`. `"shared"` is the one reserved context name — any crate may depend on it, and it may depend only on itself. Every other name is free-form; call your contexts whatever your domain calls them.
 
-**A `composition-root` crate is exempt.** A root sits outside every hexagon — wiring contexts together is the whole reason it exists — so this axis does not judge an edge out of one, whatever contexts the two crates carry. The role matrix already says the same thing from the other side: a root may name every role, and no other role may name a root. That second half is what makes this an exemption rather than a loosening — nothing can depend on a root, so a root cannot be used as a bridge into someone else's context. Tag the crate that wires your apps together `role = "composition-root"` and it may hold them all.
+**A `composition-root` crate and a `tool` crate are exempt.** A root sits outside every hexagon — wiring contexts together is the whole reason it exists. A tool sits outside them too — it reads all of them and runs none. So this axis does not judge an edge out of either, whatever contexts the two crates carry. The role matrix says the same thing from the other side: only a root may name a root, and only a tool may name a tool. That is what makes this an exemption rather than a loosening — nothing inside a context can depend on a crate outside them all, so neither can be used as a bridge into someone else's context. Tag the crate that wires your apps together `role = "composition-root"` and it may hold them all. Both still declare a context when the workspace adopts the axis; an untagged root or tool is partial adoption like any other crate.
 
 **It is opt-in, and it is all-or-nothing.** Declare zero contexts and the axis is off — the run is byte-for-byte what it was before, roles only. Declare a context on *every* workspace member and the axis is on. Declare one on *some but not all* members and hex-lint refuses to run: **partial adoption is a hard error** that names the crates missing a context and exits non-zero before any check runs. This mirrors roles, where a member without a role is already a hard error.
 
@@ -125,7 +127,7 @@ reason   = "temporary reach-in until the shared contract is extracted"
 
 `axis` defaults to `"role"` when omitted, so every exception file written before this feature keeps parsing unchanged. Each check reads only its own axis: a `role` exception never suppresses a context violation, and vice versa. And exactly as with roles, a context exception that no longer matches a real violation is **stale** and fails the lint. The file rots loud on both axes.
 
-**What a green run certifies — precisely.** hex-lint enumerates the *full* `cargo metadata` dependency graph — resolved with every feature enabled, so an edge that only one feature selection activates is still seen — and both predicates are **total**: role-matrix membership is defined for every (consumer, dep) role pair, and context equality-or-`shared`-or-a-root is defined for every context pair. There is no sampling, no heuristic, no approximation in either direction. So when hex-lint says clean, then over the crates *as you tagged them* no forbidden edge exists, on either axis. The one thing it cannot check is whether you tagged them correctly: a crate wearing the wrong `context` is a **user bug, not a tool bug**. That is the whole claim, and no more.
+**What a green run certifies — precisely.** hex-lint enumerates the *full* `cargo metadata` dependency graph — resolved with every feature enabled, so an edge that only one feature selection activates is still seen — and both predicates are **total**: role-matrix membership is defined for every (consumer, dep) role pair, and context equality-or-`shared`-or-a-root-or-a-tool is defined for every context pair. There is no sampling, no heuristic, no approximation in either direction. So when hex-lint says clean, then over the crates *as you tagged them* no forbidden edge exists, on either axis. The one thing it cannot check is whether you tagged them correctly: a crate wearing the wrong `context` is a **user bug, not a tool bug**. That is the whole claim, and no more.
 
 **One named limitation.** Context isolation is enforced at the **crate-dependency level only** — the same granularity as roles, for the same reason: the crate is the only boundary Cargo tracks. A foreign type copy-pasted *inside* a crate, or two contexts sharing one crate and `use`-ing each other freely, is out of scope. hex-lint reads the dependency graph, not your source. If you want a context boundary enforced, the two sides have to live in different crates.
 

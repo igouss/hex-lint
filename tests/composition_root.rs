@@ -1,4 +1,4 @@
-//! Process-level proof of the context axis's one exemption.
+//! Process-level proof of the context axis's exemption for a composition root.
 //!
 //! A composition root sits outside every hexagon: its whole job is to wire
 //! contexts together, so the context axis does not judge an edge out of one.
@@ -113,6 +113,6 @@ fn explain_does_not_offer_the_exemption_to_a_role_that_lacks_it() {
     let text: String = stdout(&out);
     assert!(
         !text.contains("Context isolation:"),
-        "only a root stands outside the contexts: {text}"
+        "a usecase stands inside its context: {text}"
     );
 }

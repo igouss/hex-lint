@@ -12,7 +12,8 @@
 //! DERIVED, NEVER AUTHORED. Every rule in this document is computed from the
 //! domain types that enforce it — [`Role::ALL`] and [`Role::allowed_deps`] for
 //! the matrix, [`Role::remediation`] for the per-role contracts, [`context`] for
-//! the isolation predicate and its reserved name, [`Rule::ALL`] for the rule
+//! the isolation rule and its reserved name, [`OutsideEveryContext`] for the
+//! roles the isolation predicate exempts, [`Rule::ALL`] for the rule
 //! list. Nothing here is a second copy of a rule that lives somewhere else, so
 //! the document cannot drift away from the check. A hand-written contract is a
 //! doc that rots; this one fails to compile instead.
@@ -20,6 +21,7 @@
 use serde_json::{json, Value};
 
 use crate::context;
+use crate::lint::OutsideEveryContext;
 use crate::role::Role;
 use crate::rule::Rule;
 
@@ -46,7 +48,7 @@ pub fn document(version: &str) -> Value {
         "formats": ["text", "json"],
         "declaration": declaration(),
         "roles": Role::ALL.iter().map(|r: &Role| r.as_str()).collect::<Vec<&'static str>>(),
-        "roles_note": "Listed innermost first. The order is documentary; the matrix below is authoritative.",
+        "roles_note": "Listed innermost first, then tool, which stands outside that order: it is no part of the running system, and no other role may depend on it. The order is documentary; the matrix below is authoritative.",
         "matrix": matrix(),
         "role_contracts": role_contracts(),
         "context_axis": context_axis(),
@@ -128,13 +130,26 @@ fn context_axis() -> Value {
         "optional": true,
         "adoption": "all-or-nothing: zero members declare a context (axis off), every member declares one (axis on), or some do and some do not (hard error — partial adoption is meaningless)",
         "reserved_context": context::SHARED,
-        "predicate": "consumer -> dep passes iff consumer.role == \"composition-root\" OR consumer.context == dep.context OR dep.context == \"shared\"",
+        "predicate": predicate(),
         "predicate_note": "This subsumes \"shared may depend only on shared\": a shared consumer passes only when the dependency is also shared.",
-        "exemption": "A composition-root crate is not judged on this axis: it sits outside every context in order to wire them together. The role matrix forbids every other role from depending on a composition root, so the exemption cannot become a way into another context.",
+        "exemption": "A composition-root or tool crate is not judged on this axis: each sits outside every context, a root to wire them together and a tool to read them all. The role matrix forbids every role that lacks that standing from depending on a crate that has it, so the exemption cannot become a way into another context.",
         "orthogonal_to_roles": true,
         "rule": rem.rationale,
         "fixes": rem.fixes,
     })
+}
+
+/// The isolation predicate, its exempt roles read off the witness that exempts
+/// them.
+fn predicate() -> String {
+    let exempt: String = Role::ALL
+        .iter()
+        .filter(|&&r: &&Role| OutsideEveryContext::of(r).is_some())
+        .map(|r: &Role| format!("consumer.role == \"{}\" OR ", r.as_str()))
+        .collect();
+    format!(
+        "consumer -> dep passes iff {exempt}consumer.context == dep.context OR dep.context == \"shared\""
+    )
 }
 
 fn exceptions() -> Value {
@@ -210,6 +225,7 @@ fn limits() -> Value {
 mod tests {
     use super::{document, render, SCHEMA_VERSION};
     use crate::context;
+    use crate::lint::OutsideEveryContext;
     use crate::role::Role;
     use crate::rule::Rule;
     use serde_json::Value;
@@ -311,10 +327,13 @@ mod tests {
         let predicate: &str = d["context_axis"]["predicate"]
             .as_str()
             .expect("predicate is a string");
-        assert!(
-            predicate.contains(Role::CompositionRoot.as_str()),
-            "the published predicate must name the exempt role: {predicate}"
-        );
+        let unnamed: Vec<&'static str> = Role::ALL
+            .iter()
+            .filter(|&&r: &&Role| OutsideEveryContext::of(r).is_some())
+            .map(|&r: &Role| r.as_str())
+            .filter(|name: &&str| !predicate.contains(&format!("consumer.role == \"{name}\"")))
+            .collect();
+        assert_eq!(unnamed, Vec::<&'static str>::new());
         assert!(
             d["context_axis"]["exemption"].is_string(),
             "the exemption must be published as its own field"

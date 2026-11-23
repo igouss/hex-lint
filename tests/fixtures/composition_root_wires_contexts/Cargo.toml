@@ -1,6 +1,6 @@
 # The composition-root exemption: `app-wiring` (composition-root, app) names a
 # usecase in `shopping` and a usecase in `pantry`. The role matrix lets a root
-# name every role, and the context axis does not judge an edge out of one, so
+# name every role but tool, and the context axis does not judge an edge out of one, so
 # both axes are clean on two cross-context edges.
 [workspace]
 resolver = "2"

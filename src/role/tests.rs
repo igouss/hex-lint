@@ -16,9 +16,10 @@ fn all_lists_every_variant() {
             Role::DrivingAdapter => 5,
             Role::Infra => 6,
             Role::CompositionRoot => 7,
+            Role::Tool => 8,
         }
     }
-    assert_eq!(Role::ALL.len(), tag(Role::CompositionRoot) + 1);
+    assert_eq!(Role::ALL.len(), tag(Role::Tool) + 1);
 }
 
 #[test]
@@ -119,11 +120,28 @@ fn infra_only_depends_on_infra() {
 }
 
 #[test]
-fn composition_root_can_depend_on_anything() {
-    let allowed: &[Role] = Role::CompositionRoot.allowed_deps();
-    for &r in ALL {
-        assert!(allowed.contains(&r), "composition-root should allow {r:?}");
-    }
+fn composition_root_can_depend_on_every_role_but_tool() {
+    let refused: Vec<Role> = ALL
+        .iter()
+        .copied()
+        .filter(|r: &Role| !Role::CompositionRoot.allowed_deps().contains(r))
+        .collect();
+    assert_eq!(refused, vec![Role::Tool]);
+}
+
+#[test]
+fn tool_depends_only_on_tool() {
+    assert_eq!(Role::Tool.allowed_deps(), &[Role::Tool]);
+}
+
+#[test]
+fn nothing_but_a_tool_may_depend_on_a_tool() {
+    let consumers: Vec<Role> = ALL
+        .iter()
+        .copied()
+        .filter(|r: &Role| r.allowed_deps().contains(&Role::Tool))
+        .collect();
+    assert_eq!(consumers, vec![Role::Tool]);
 }
 
 #[test]

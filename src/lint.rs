@@ -38,6 +38,9 @@ pub struct WorkspacePackage {
 pub enum OutsideEveryContext {
     /// The declared role is `composition-root`: it wires the contexts together.
     WiringRoot(Earned),
+    /// The declared role is `tool`: it reads every context and is no part of
+    /// the running system.
+    Tool(Earned),
 }
 
 /// Proof that a role tag, not a call site, produced the enclosing witness.
@@ -49,6 +52,7 @@ impl OutsideEveryContext {
     pub fn of(role: Role) -> Option<Self> {
         match role {
             Role::CompositionRoot => Some(Self::WiringRoot(Earned(()))),
+            Role::Tool => Some(Self::Tool(Earned(()))),
             Role::Kernel
             | Role::Domain
             | Role::Usecase
@@ -173,7 +177,9 @@ pub fn reconcile<V: Clone>(
 
 #[cfg(test)]
 mod tests {
-    use super::{reconcile, unknown_endpoints, Axis, AxisReport, Exception, OutsideEveryContext};
+    use super::{
+        reconcile, unknown_endpoints, Axis, AxisReport, Earned, Exception, OutsideEveryContext,
+    };
     use crate::role::Role;
     use std::collections::BTreeSet;
 
@@ -193,20 +199,46 @@ mod tests {
 
     #[test]
     fn the_composition_root_earns_the_wiring_witness() {
-        assert!(OutsideEveryContext::of(Role::CompositionRoot).is_some());
+        assert_eq!(
+            OutsideEveryContext::of(Role::CompositionRoot),
+            Some(OutsideEveryContext::WiringRoot(Earned(())))
+        );
     }
 
     #[test]
-    fn no_other_role_earns_the_wiring_witness() {
-        // Quantified over the whole role enumeration, so a role added later
-        // cannot quietly acquire the standing: the earned list must stay empty.
+    fn the_tool_earns_the_tool_witness() {
+        assert_eq!(
+            OutsideEveryContext::of(Role::Tool),
+            Some(OutsideEveryContext::Tool(Earned(())))
+        );
+    }
+
+    #[test]
+    fn exactly_the_composition_root_and_the_tool_stand_outside_every_context() {
+        // Quantified over the whole role enumeration and pinned as a literal,
+        // so a role added later cannot quietly acquire the standing.
         let earned: Vec<&'static str> = Role::ALL
             .iter()
-            .filter(|&&r: &&Role| r != Role::CompositionRoot)
             .filter(|&&r: &&Role| OutsideEveryContext::of(r).is_some())
             .map(|&r: &Role| r.as_str())
             .collect();
-        assert_eq!(earned, Vec::<&'static str>::new());
+        assert_eq!(earned, vec!["composition-root", "tool"]);
+    }
+
+    #[test]
+    fn no_role_inside_the_contexts_may_depend_on_a_role_outside_them() {
+        let bridges: Vec<(&'static str, &'static str)> = Role::ALL
+            .iter()
+            .filter(|&&consumer: &&Role| OutsideEveryContext::of(consumer).is_none())
+            .flat_map(|&consumer: &Role| {
+                consumer
+                    .allowed_deps()
+                    .iter()
+                    .filter(|&&dep: &&Role| OutsideEveryContext::of(dep).is_some())
+                    .map(move |&dep: &Role| (consumer.as_str(), dep.as_str()))
+            })
+            .collect();
+        assert_eq!(bridges, Vec::<(&'static str, &'static str)>::new());
     }
 
     #[test]

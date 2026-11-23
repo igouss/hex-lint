@@ -1,6 +1,8 @@
 use crate::args::{parse_args, ParseOutcome};
 use crate::role::Role;
 
+const README: &str = include_str!("../README.md");
+
 fn args(slice: &[&str]) -> Vec<String> {
     slice.iter().map(|s| (*s).to_owned()).collect()
 }
@@ -227,7 +229,7 @@ fn help_documents_every_enforced_axis() {
     );
     assert!(
         help.contains("is exempt"),
-        "help must state the context axis's one exemption"
+        "help must state the context axis's exemptions"
     );
 
     // Exceptions cover both axes.
@@ -235,4 +237,14 @@ fn help_documents_every_enforced_axis() {
         help.contains("axis = \"context\""),
         "help must show the context exception axis key"
     );
+}
+
+#[test]
+fn the_readme_matrix_has_a_row_for_every_role() {
+    let missing: Vec<&'static str> = Role::ALL
+        .iter()
+        .map(|r: &Role| r.as_str())
+        .filter(|name: &&str| !README.contains(&format!("\n| `{name}` ")))
+        .collect();
+    assert_eq!(missing, Vec::<&'static str>::new());
 }

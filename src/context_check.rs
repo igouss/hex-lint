@@ -92,8 +92,8 @@ mod tests {
         }
     }
 
-    /// A package that wires the system together: the one role whose edges this
-    /// axis does not judge.
+    /// A package that wires the system together: one of the two roles whose
+    /// edges this axis does not judge.
     fn root(name: &str, context: Option<&str>) -> WorkspacePackage {
         WorkspacePackage {
             name: name.to_owned(),
@@ -299,11 +299,12 @@ mod tests {
     }
 
     #[test]
-    fn the_exemption_changes_the_verdict_only_for_a_wiring_root() {
+    fn the_exemption_changes_the_verdict_only_for_a_crate_outside_every_context() {
         // Quantified over every role the tool knows, crossed with every context
         // class: the axis answers exactly what it answered before the exemption
-        // existed, except out of a crate holding the wiring witness, where it
-        // answers "no violation" whatever the contexts are.
+        // existed, except out of a crate holding the witness of standing
+        // outside every context, where it answers "no violation" whatever the
+        // contexts are.
         let actual: Vec<(&str, &str, &str, usize)> = cases()
             .map(|(role, cc, dc): (Role, &str, &str)| {
                 (role.as_str(), cc, dc, verdict(role, cc, dc))

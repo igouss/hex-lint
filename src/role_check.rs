@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn legal_edges_ignored() {
-        // composition-root may depend on anything.
+        // composition-root may depend on every role but tool.
         let packages: Vec<WorkspacePackage> = vec![
             pkg("root", Role::CompositionRoot),
             pkg("d", Role::Domain),

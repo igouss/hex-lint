@@ -17,10 +17,15 @@ use crate::remediation::Remediation;
 pub const SHARED: &str = "shared";
 
 /// The context rule in one sentence, its exemption included. The single
-/// statement of it: the remediation rationale, the published contract and
-/// `explain` all read this, so no surface can state the rule and leave the
-/// exemption out.
-pub const RULE: &str = "a crate may depend only on crates in its own context, or in the shared context; the shared context may depend only on shared. A composition root is exempt — it sits outside every context in order to wire them together, and nothing may depend on a composition root, so the exemption opens no way into a context.";
+/// statement of it: the remediation rationale and the published contract both
+/// read this, so neither can state the rule and leave the exemption out.
+/// `explain` states the exemption to the crate that holds it, through
+/// [`exemption_note`].
+pub const RULE: &str = "a crate may depend only on crates in its own context, or in the shared context; the shared context may depend only on shared. Two roles are exempt, because each sits outside every context: a composition root, to wire them together, and a tool, to read them all. Nothing that lacks that standing may depend on a crate that has it, so the exemption opens no way into a context.";
+
+const ROOT_EXEMPTION: &str = "A composition root is exempt: it sits outside every context in order to wire them together, so this axis does not judge an edge out of it. Nothing but a composition root may depend on a composition root, so the exemption opens no way into a context.";
+
+const TOOL_EXEMPTION: &str = "A tool is exempt: it sits outside every context because it reads them all and is no part of the running system, so this axis does not judge an edge out of it. Nothing but a tool may depend on a tool, so the exemption opens no way into a context.";
 
 /// Where the consumer of a dependency edge stands with respect to the contexts.
 ///
@@ -62,11 +67,13 @@ pub fn allows(consumer: Standing<'_>, dep_ctx: &str) -> bool {
     }
 }
 
-/// The rule as it reads to a crate that stands outside the contexts. Takes the
-/// witness, so this axis cannot tell a crate it is exempt unless it is.
+/// The exemption as it reads to a crate that stands outside the contexts, for
+/// the reason its witness names. Takes the witness, so this axis cannot tell a
+/// crate it is exempt unless it is.
 pub fn exemption_note(witness: OutsideEveryContext) -> &'static str {
     match witness {
-        OutsideEveryContext::WiringRoot(_) => RULE,
+        OutsideEveryContext::WiringRoot(_) => ROOT_EXEMPTION,
+        OutsideEveryContext::Tool(_) => TOOL_EXEMPTION,
     }
 }
 
@@ -132,7 +139,7 @@ pub fn remediation() -> Remediation {
 mod tests {
     use super::{adoption, allows, exemption_note, remediation, Adoption, Standing, RULE, SHARED};
     // The role type is named only to fill `WorkspacePackage`'s mandatory `role`
-    // field when building fixtures, and to mint the wiring witness this axis
+    // field when building fixtures, and to mint the witnesses this axis
     // consumes but never produces; no context logic here consults it.
     use crate::lint::{OutsideEveryContext, WorkspacePackage};
     use crate::remediation::Remediation;
@@ -150,6 +157,10 @@ mod tests {
     fn wiring() -> OutsideEveryContext {
         OutsideEveryContext::of(Role::CompositionRoot)
             .expect("composition-root earns the wiring witness")
+    }
+
+    fn tool() -> OutsideEveryContext {
+        OutsideEveryContext::of(Role::Tool).expect("tool earns the tool witness")
     }
 
     #[test]
@@ -191,13 +202,26 @@ mod tests {
     }
 
     #[test]
-    fn the_stated_rule_carries_the_exemption() {
+    fn the_stated_rule_carries_both_exemptions() {
         assert!(
-            RULE.contains("composition root is exempt"),
-            "the rule must state its exemption: {RULE}"
+            RULE.contains("a composition root, to wire them together"),
+            "the rule must state the root's exemption: {RULE}"
         );
-        assert_eq!(exemption_note(wiring()), RULE);
+        assert!(
+            RULE.contains("a tool, to read them all"),
+            "the rule must state the tool's exemption: {RULE}"
+        );
         assert_eq!(remediation().rationale, RULE);
+    }
+
+    #[test]
+    fn a_root_is_told_it_is_exempt_as_a_root() {
+        assert!(exemption_note(wiring()).starts_with("A composition root is exempt"));
+    }
+
+    #[test]
+    fn a_tool_is_told_it_is_exempt_as_a_tool() {
+        assert!(exemption_note(tool()).starts_with("A tool is exempt"));
     }
 
     #[test]
