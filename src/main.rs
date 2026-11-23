@@ -9,8 +9,9 @@
 //! 3. Any exceptions-file entry that no longer corresponds to a real
 //!    violation — keeps the file honest as debt is paid off.
 //!
-//! This file is the composition root: it parses args, calls the adapters,
-//! runs the use case, and formats output. No business logic lives here.
+//! This file is the composition root: it hands the arguments to `args`, calls
+//! the adapters, runs the use cases, and passes their reports to `help`,
+//! `render_text` or `render_json`. No business logic lives here.
 
 #![allow(clippy::print_stderr, reason = "this IS a CLI tool")]
 #![allow(clippy::print_stdout, reason = "this IS a CLI tool")]
