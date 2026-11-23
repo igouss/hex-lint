@@ -4,7 +4,7 @@
 //! (`workspace.rs`, `exceptions.rs`), the `Axis` tag that routes an exception
 //! to a check, a generic per-axis report, the generic exception reconciliation
 //! (unsanctioned + stale + unknown-crate set arithmetic), and the one standing
-//! both axes read — [`OutsideEveryContext`]. It enforces neither axis's rules: each axis
+//! both axes read — [`WiringRoot`]. It enforces neither axis's rules: each axis
 //! lives in its own use-case file and stands on this shared plumbing, so
 //! neither ever has to name the other.
 
@@ -25,30 +25,22 @@ pub struct WorkspacePackage {
     pub context: Option<String>,
 }
 
-/// Witness that a crate stands outside every bounded context instead of living
-/// inside one, with the reason its declared role gives.
+/// Witness that a crate wires the system together instead of living inside one
+/// part of it — its declared role is `composition-root`.
 ///
-/// Each variant carries an [`Earned`], whose field is private, and
-/// [`OutsideEveryContext::of`] is the only constructor, so a call site cannot
-/// assert this standing: it can only be handed one that a role tag earned. Every
-/// rule that exempts such a crate takes this value rather than re-reading the
-/// tag, so no two of them can disagree about which crates stand outside, and a
-/// surface that speaks for one cannot be reached without it.
+/// The field is private and [`WiringRoot::of`] is the only constructor, so a
+/// call site cannot assert this standing: it can only be handed one that a role
+/// tag earned. Every rule that exempts a composition root takes this value
+/// rather than re-reading the tag, so no two of them can disagree about what a
+/// root is, and a surface that speaks for a root cannot be reached without one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum OutsideEveryContext {
-    /// The declared role is `composition-root`: it wires the contexts together.
-    WiringRoot(Earned),
-}
+pub struct WiringRoot(());
 
-/// Proof that a role tag, not a call site, produced the enclosing witness.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Earned(());
-
-impl OutsideEveryContext {
+impl WiringRoot {
     /// The witness `role` earns, if it earns one.
     pub fn of(role: Role) -> Option<Self> {
         match role {
-            Role::CompositionRoot => Some(Self::WiringRoot(Earned(()))),
+            Role::CompositionRoot => Some(Self(())),
             Role::Kernel
             | Role::Domain
             | Role::Usecase
@@ -62,10 +54,9 @@ impl OutsideEveryContext {
 }
 
 impl WorkspacePackage {
-    /// This package's witness of standing outside every context, if its role
-    /// earns one.
-    pub fn outside_every_context(&self) -> Option<OutsideEveryContext> {
-        OutsideEveryContext::of(self.role)
+    /// This package's wiring witness, if its role earns one.
+    pub fn wiring_root(&self) -> Option<WiringRoot> {
+        WiringRoot::of(self.role)
     }
 }
 
@@ -174,9 +165,7 @@ pub fn reconcile<V: Clone>(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        reconcile, unknown_endpoints, Axis, AxisReport, Earned, Exception, OutsideEveryContext,
-    };
+    use super::{reconcile, unknown_endpoints, Axis, AxisReport, Exception, WiringRoot};
     use crate::role::Role;
     use std::collections::BTreeSet;
 
@@ -196,19 +185,16 @@ mod tests {
 
     #[test]
     fn the_composition_root_earns_the_wiring_witness() {
-        assert_eq!(
-            OutsideEveryContext::of(Role::CompositionRoot),
-            Some(OutsideEveryContext::WiringRoot(Earned(())))
-        );
+        assert_eq!(WiringRoot::of(Role::CompositionRoot), Some(WiringRoot(())));
     }
 
     #[test]
-    fn exactly_the_composition_root_stands_outside_every_context() {
+    fn exactly_the_composition_root_earns_the_wiring_witness() {
         // Quantified over the whole role enumeration and pinned as a literal,
         // so a role added later cannot quietly acquire the standing.
         let earned: Vec<&'static str> = Role::ALL
             .iter()
-            .filter(|&&r: &&Role| OutsideEveryContext::of(r).is_some())
+            .filter(|&&r: &&Role| WiringRoot::of(r).is_some())
             .map(|&r: &Role| r.as_str())
             .collect();
         assert_eq!(earned, vec!["composition-root"]);
@@ -218,12 +204,12 @@ mod tests {
     fn no_role_inside_the_contexts_may_depend_on_a_role_outside_them() {
         let bridges: Vec<(&'static str, &'static str)> = Role::ALL
             .iter()
-            .filter(|&&consumer: &&Role| OutsideEveryContext::of(consumer).is_none())
+            .filter(|&&consumer: &&Role| WiringRoot::of(consumer).is_none())
             .flat_map(|&consumer: &Role| {
                 consumer
                     .allowed_deps()
                     .iter()
-                    .filter(|&&dep: &&Role| OutsideEveryContext::of(dep).is_some())
+                    .filter(|&&dep: &&Role| WiringRoot::of(dep).is_some())
                     .map(move |&dep: &Role| (consumer.as_str(), dep.as_str()))
             })
             .collect();
@@ -242,11 +228,8 @@ mod tests {
             role: Role::Usecase,
             context: None,
         };
-        assert_eq!(
-            root.outside_every_context(),
-            OutsideEveryContext::of(Role::CompositionRoot)
-        );
-        assert_eq!(leaf.outside_every_context(), None);
+        assert_eq!(root.wiring_root(), WiringRoot::of(Role::CompositionRoot));
+        assert_eq!(leaf.wiring_root(), None);
     }
 
     /// The workspace every test below reconciles against: crates `a` … `d`.

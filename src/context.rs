@@ -6,10 +6,10 @@
 //! deliberately does NOT depend on `crate::role`: the two axes are orthogonal,
 //! so a reader can delete this file (and its use case) without touching the
 //! role axis, and vice versa. The only shared foundation is the neutral
-//! `WorkspacePackage` DTO, the `OutsideEveryContext` standing it carries, and the
+//! `WorkspacePackage` DTO, the `WiringRoot` standing it carries, and the
 //! axis-neutral `Remediation`.
 
-use crate::lint::{OutsideEveryContext, WorkspacePackage};
+use crate::lint::{WiringRoot, WorkspacePackage};
 use crate::remediation::Remediation;
 
 /// The single reserved context name. Any crate may depend on a `shared` crate;
@@ -25,25 +25,26 @@ pub const RULE: &str = "a crate may depend only on crates in its own context, or
 /// Where the consumer of a dependency edge stands with respect to the contexts.
 ///
 /// A crate either lives inside exactly one bounded context, and everything it
-/// names must be in that context or in `shared`; or it stands outside every
-/// context, and this axis does not judge its edges. A sum rather than a context
-/// plus a flag, so no caller can ask about an edge without first saying where
-/// its consumer stands — and `Outside` cannot be claimed, only presented: it
-/// carries the witness a role tag earns.
+/// names must be in that context or in `shared`; or it is a wiring root, which
+/// sits outside every context precisely so that it can join them, and whose
+/// edges this axis does not judge. A sum rather than a context plus a flag, so
+/// no caller can ask about an edge without first saying where its consumer
+/// stands — and `Wiring` cannot be claimed, only presented: it carries the
+/// witness a role tag earns.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Standing<'a> {
     /// Inside the named bounded context.
     Inside(&'a str),
-    /// Outside every bounded context, for the reason the witness names.
-    Outside(OutsideEveryContext),
+    /// Outside every bounded context, wiring them together.
+    Wiring(WiringRoot),
 }
 
 impl<'a> Standing<'a> {
     /// Where a consumer that declares `context` stands, given the witness its
     /// role earned — if it earned one.
-    pub fn of(context: &'a str, outside: Option<OutsideEveryContext>) -> Self {
-        match outside {
-            Some(witness) => Self::Outside(witness),
+    pub fn of(context: &'a str, wiring: Option<WiringRoot>) -> Self {
+        match wiring {
+            Some(root) => Self::Wiring(root),
             None => Self::Inside(context),
         }
     }
@@ -57,17 +58,15 @@ impl<'a> Standing<'a> {
 /// is not judged at all — see [`RULE`].
 pub fn allows(consumer: Standing<'_>, dep_ctx: &str) -> bool {
     match consumer {
-        Standing::Outside(_) => true,
+        Standing::Wiring(_) => true,
         Standing::Inside(consumer_ctx) => consumer_ctx == dep_ctx || dep_ctx == SHARED,
     }
 }
 
 /// The rule as it reads to a crate that stands outside the contexts. Takes the
 /// witness, so this axis cannot tell a crate it is exempt unless it is.
-pub fn exemption_note(witness: OutsideEveryContext) -> &'static str {
-    match witness {
-        OutsideEveryContext::WiringRoot(_) => RULE,
-    }
+pub fn exemption_note(_: WiringRoot) -> &'static str {
+    RULE
 }
 
 /// Whether the workspace has opted into the context axis, and how completely.
@@ -134,7 +133,7 @@ mod tests {
     // The role type is named only to fill `WorkspacePackage`'s mandatory `role`
     // field when building fixtures, and to mint the wiring witness this axis
     // consumes but never produces; no context logic here consults it.
-    use crate::lint::{OutsideEveryContext, WorkspacePackage};
+    use crate::lint::{WiringRoot, WorkspacePackage};
     use crate::remediation::Remediation;
     use crate::role::Role;
 
@@ -147,9 +146,8 @@ mod tests {
     }
 
     /// The witness a `composition-root` tag earns.
-    fn wiring() -> OutsideEveryContext {
-        OutsideEveryContext::of(Role::CompositionRoot)
-            .expect("composition-root earns the wiring witness")
+    fn wiring() -> WiringRoot {
+        WiringRoot::of(Role::CompositionRoot).expect("composition-root earns the wiring witness")
     }
 
     #[test]
@@ -174,7 +172,7 @@ mod tests {
 
     #[test]
     fn a_wiring_root_reaching_another_context_is_allowed() {
-        assert!(allows(Standing::Outside(wiring()), "pantry"));
+        assert!(allows(Standing::Wiring(wiring()), "pantry"));
     }
 
     #[test]
@@ -186,7 +184,7 @@ mod tests {
     fn a_consumer_with_the_witness_stands_outside_its_context() {
         assert_eq!(
             Standing::of("shopping", Some(wiring())),
-            Standing::Outside(wiring())
+            Standing::Wiring(wiring())
         );
     }
 

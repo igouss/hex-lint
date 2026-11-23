@@ -12,8 +12,8 @@
 //! DERIVED, NEVER AUTHORED. Every rule in this document is computed from the
 //! domain types that enforce it — [`Role::ALL`] and [`Role::allowed_deps`] for
 //! the matrix, [`Role::remediation`] for the per-role contracts, [`context`] for
-//! the isolation rule and its reserved name, [`OutsideEveryContext`] for the
-//! roles the isolation predicate exempts, [`Rule::ALL`] for the rule
+//! the isolation rule and its reserved name, [`WiringRoot`] for the
+//! role the isolation predicate exempts, [`Rule::ALL`] for the rule
 //! list. Nothing here is a second copy of a rule that lives somewhere else, so
 //! the document cannot drift away from the check. A hand-written contract is a
 //! doc that rots; this one fails to compile instead.
@@ -21,7 +21,7 @@
 use serde_json::{json, Value};
 
 use crate::context;
-use crate::lint::OutsideEveryContext;
+use crate::lint::WiringRoot;
 use crate::role::Role;
 use crate::rule::Rule;
 
@@ -144,7 +144,7 @@ fn context_axis() -> Value {
 fn predicate() -> String {
     let exempt: String = Role::ALL
         .iter()
-        .filter(|&&r: &&Role| OutsideEveryContext::of(r).is_some())
+        .filter(|&&r: &&Role| WiringRoot::of(r).is_some())
         .map(|r: &Role| format!("consumer.role == \"{}\" OR ", r.as_str()))
         .collect();
     format!(
@@ -225,7 +225,7 @@ fn limits() -> Value {
 mod tests {
     use super::{document, render, SCHEMA_VERSION};
     use crate::context;
-    use crate::lint::OutsideEveryContext;
+    use crate::lint::WiringRoot;
     use crate::role::Role;
     use crate::rule::Rule;
     use serde_json::Value;
@@ -329,7 +329,7 @@ mod tests {
             .expect("predicate is a string");
         let unnamed: Vec<&'static str> = Role::ALL
             .iter()
-            .filter(|&&r: &&Role| OutsideEveryContext::of(r).is_some())
+            .filter(|&&r: &&Role| WiringRoot::of(r).is_some())
             .map(|&r: &Role| r.as_str())
             .filter(|name: &&str| !predicate.contains(&format!("consumer.role == \"{name}\"")))
             .collect();

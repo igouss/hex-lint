@@ -1,5 +1,5 @@
 use crate::context;
-use crate::lint::OutsideEveryContext;
+use crate::lint::WiringRoot;
 use crate::remediation::Remediation;
 use crate::role::Role;
 use crate::DEFAULT_EXCEPTIONS_FILENAME;
@@ -86,8 +86,8 @@ pub fn print_explain(role: Role) {
     println!();
     println!("Contract:");
     println!("    {}", rem.rationale);
-    if let Some(witness) = OutsideEveryContext::of(role) {
-        print_context_exemption(witness);
+    if let Some(root) = WiringRoot::of(role) {
+        print_context_exemption(root);
     }
     println!();
     println!(
@@ -102,8 +102,8 @@ pub fn print_explain(role: Role) {
 /// What the context axis says to a crate that stands outside every context.
 /// Takes the witness, so `explain` cannot print this under a role that has not
 /// earned it.
-fn print_context_exemption(witness: OutsideEveryContext) {
+fn print_context_exemption(root: WiringRoot) {
     println!();
     println!("Context isolation:");
-    println!("    {}", context::exemption_note(witness));
+    println!("    {}", context::exemption_note(root));
 }

@@ -48,7 +48,7 @@ pub fn run(
         let (Some(cc), Some(dc)) = (consumer.context.as_deref(), dep.context.as_deref()) else {
             continue;
         };
-        if !context::allows(Standing::of(cc, consumer.outside_every_context()), dc) {
+        if !context::allows(Standing::of(cc, consumer.wiring_root()), dc) {
             violations.push(ContextViolation {
                 consumer: edge.consumer.clone(),
                 consumer_context: cc.to_owned(),
@@ -79,9 +79,7 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::{run, ContextViolation};
-    use crate::lint::{
-        Axis, AxisReport, DepEdge, Exception, OutsideEveryContext, WorkspacePackage,
-    };
+    use crate::lint::{Axis, AxisReport, DepEdge, Exception, WiringRoot, WorkspacePackage};
     use crate::role::Role;
 
     fn pkg(name: &str, context: Option<&str>) -> WorkspacePackage {
@@ -333,7 +331,7 @@ mod tests {
                     role.as_str(),
                     cc,
                     dc,
-                    OutsideEveryContext::of(role).map_or(unexempt, |_: OutsideEveryContext| 0),
+                    WiringRoot::of(role).map_or(unexempt, |_: WiringRoot| 0),
                 )
             })
             .collect();
