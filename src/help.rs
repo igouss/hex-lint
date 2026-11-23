@@ -60,11 +60,9 @@ CONTEXT ISOLATION (optional, orthogonal to roles):
     itself. Every other name is free-form.
 
     A `composition-root` crate is exempt: it sits outside every context in
-    order to wire them together, so it may name crates in any of them. A
-    `tool` crate is exempt too: it reads every context and is no part of the
-    running system. Only a root may depend on a root and only a tool on a
-    tool, so neither exemption opens a way into a context. Both still declare
-    a context when the workspace adopts the axis.
+    order to wire them together, so it may name crates in any of them. No other
+    role may depend on a composition root, so the exemption opens no way into a
+    context.
 
     Opt-in and all-or-nothing: zero contexts = axis off (roles only); a context
     on every member = axis on; a context on only SOME members is a hard error

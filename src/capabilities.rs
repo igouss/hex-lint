@@ -132,7 +132,7 @@ fn context_axis() -> Value {
         "reserved_context": context::SHARED,
         "predicate": predicate(),
         "predicate_note": "This subsumes \"shared may depend only on shared\": a shared consumer passes only when the dependency is also shared.",
-        "exemption": "A composition-root or tool crate is not judged on this axis: each sits outside every context, a root to wire them together and a tool to read them all. The role matrix forbids every role that lacks that standing from depending on a crate that has it, so the exemption cannot become a way into another context.",
+        "exemption": "A composition-root crate is not judged on this axis: it sits outside every context in order to wire them together. The role matrix forbids every other role from depending on a composition root, so the exemption cannot become a way into another context.",
         "orthogonal_to_roles": true,
         "rule": rem.rationale,
         "fixes": rem.fixes,

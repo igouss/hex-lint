@@ -92,8 +92,8 @@ mod tests {
         }
     }
 
-    /// A package that wires the system together: one of the two roles whose
-    /// edges this axis does not judge.
+    /// A package that wires the system together: the one role whose edges this
+    /// axis does not judge.
     fn root(name: &str, context: Option<&str>) -> WorkspacePackage {
         WorkspacePackage {
             name: name.to_owned(),
@@ -256,6 +256,23 @@ mod tests {
         assert_eq!(report.unsanctioned.len(), 2);
     }
 
+    #[test]
+    fn a_tool_reaching_two_other_contexts_is_two_violations() {
+        let packages: Vec<WorkspacePackage> = vec![
+            WorkspacePackage {
+                name: "gates".to_owned(),
+                role: Role::Tool,
+                context: Some("gates".to_owned()),
+            },
+            pkg("shopping", Some("shopping")),
+            pkg("pantry", Some("pantry")),
+        ];
+        let edges: Vec<DepEdge> = vec![edge("gates", "shopping"), edge("gates", "pantry")];
+        let report: AxisReport<ContextViolation> = run(&packages, &edges, &[]);
+        assert_eq!(report.violations.len(), 2);
+        assert_eq!(report.unsanctioned.len(), 2);
+    }
+
     /// Every context pair this axis can tell apart. The predicate reads its two
     /// arguments only through `==` against each other and against the reserved
     /// name, so these four classes exhaust its domain up to renaming.
@@ -299,12 +316,11 @@ mod tests {
     }
 
     #[test]
-    fn the_exemption_changes_the_verdict_only_for_a_crate_outside_every_context() {
+    fn the_exemption_changes_the_verdict_only_for_a_wiring_root() {
         // Quantified over every role the tool knows, crossed with every context
         // class: the axis answers exactly what it answered before the exemption
-        // existed, except out of a crate holding the witness of standing
-        // outside every context, where it answers "no violation" whatever the
-        // contexts are.
+        // existed, except out of a crate holding the wiring witness, where it
+        // answers "no violation" whatever the contexts are.
         let actual: Vec<(&str, &str, &str, usize)> = cases()
             .map(|(role, cc, dc): (Role, &str, &str)| {
                 (role.as_str(), cc, dc, verdict(role, cc, dc))

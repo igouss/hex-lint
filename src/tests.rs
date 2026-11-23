@@ -229,7 +229,7 @@ fn help_documents_every_enforced_axis() {
     );
     assert!(
         help.contains("is exempt"),
-        "help must state the context axis's exemptions"
+        "help must state the context axis's one exemption"
     );
 
     // Exceptions cover both axes.

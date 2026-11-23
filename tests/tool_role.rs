@@ -39,20 +39,16 @@ fn explain_tool_prints_the_contract() {
 }
 
 #[test]
-fn explain_tool_states_the_context_exemption_as_a_tool_holds_it() {
+fn explain_tool_offers_no_context_exemption() {
     let out: Output = common::run_outside_a_workspace(&["explain", "tool"]);
     let text: String = stdout(&out);
     assert!(
-        text.contains("Context isolation:"),
-        "explain must state the context axis for a tool: {text}"
+        !text.contains("Context isolation:"),
+        "a tool is judged on the context axis like any crate: {text}"
     );
     assert!(
-        text.contains("A tool is exempt"),
-        "explain must tell a tool that it is exempt: {text}"
-    );
-    assert!(
-        !text.contains("A composition root is exempt"),
-        "a tool is not a composition root: {text}"
+        !text.contains("is exempt"),
+        "a tool is judged on the context axis like any crate: {text}"
     );
 }
 
@@ -155,14 +151,41 @@ fn a_composition_root_depending_on_a_tool_is_told_why_and_how_to_fix_it() {
 }
 
 #[test]
-fn a_tool_depending_on_a_tool_in_another_context_is_clean_on_the_context_axis() {
+fn a_tool_depending_on_a_tool_in_another_context_fails_naming_the_edge() {
     let out: Output = common::run("tool_crosses_contexts", &[]);
     let err: String = stderr(&out);
-    assert!(out.status.success(), "stderr: {err}");
+    assert!(!out.status.success(), "stderr: {err}");
     assert!(
-        !err.contains("context-isolation violations"),
-        "the context axis must not judge an edge out of a tool: {err}"
+        err.contains("gates [gates] -> views [views]: forbidden"),
+        "expected the cross-context edge with both contexts: {err}"
     );
+}
+
+#[test]
+fn a_tool_depending_on_a_tool_in_another_context_leaves_the_role_axis_clean() {
+    let out: Output = common::run("tool_crosses_contexts", &[]);
+    let err: String = stderr(&out);
+    assert!(
+        !err.contains("unsanctioned hex-arch role violations"),
+        "tool -> tool is legal on the role axis: {err}"
+    );
+}
+
+#[test]
+fn a_tool_depending_on_a_tool_in_its_own_context_is_clean() {
+    let out: Output = common::run("tool_within_one_context", &[]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("hex-lint: context isolation clean ("),
+        "stdout: {}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn a_tool_depending_on_a_tool_in_shared_is_clean() {
+    let out: Output = common::run("tool_on_shared_tool", &[]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert!(
         stdout(&out).contains("hex-lint: context isolation clean ("),
         "stdout: {}",
